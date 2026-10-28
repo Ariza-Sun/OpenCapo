@@ -23,18 +23,24 @@
 
 ```
 src/opencapo/
-    audio.py                 # 解码（ffmpeg）→ float32 数组 + 采样率；时长上限检查
+    errors.py                # InputError（CLI 与流水线共用）
     analysis/
-        __init__.py          # analyze(path, ...) -> (Analysis, StageTimings)
-        separate.py          # Separator 协议 + Demucs 适配器；Stems 对象与临时目录管理
-        beats.py             # BeatTracker 协议 + 选定模型的适配器
-        grid.py              # 拍点 + 强拍 → Beat 元组、全局 BPM、每小节拍数（纯计算，无模型）
-        timing.py            # 各环节计时
+        __init__.py          # 只有文档字符串，不 import 任何重依赖
+        deps.py              # 分析依赖是否装齐的检查（给 CLI 一句清楚的安装提示）
+        device.py            # "auto" → cuda / cpu
+        audio.py             # ffprobe + ffmpeg 解码 → float32 数组；8 分钟上限
+        separate.py          # Separator 协议、Stems、临时目录、Demucs 适配器
+        beats.py             # BeatTracker 协议、Beat This! 适配器
+        grid.py              # 拍点 + 强拍 → Beat 元组、Tempo、TimeSignature（纯计算，无模型）
+        pipeline.py          # analyze_file(...) -> AnalysisResult(analysis, timings)；StageTimings
 scripts/
-    eval_beats.py            # 节拍评测：候选模型 × 数据集 → F-measure 表
-    time_pipeline.py         # 一首歌的各环节耗时
-    requirements-eval.txt    # 只有评测对比用到的依赖（见 3.3）
+    make_tone.py             # 正弦波 / 节拍器点击音（--click BPM），测试与 CI 用
+    eval_beats.py            # 节拍评测：候选 × GTZAN → F-measure 表（含自检）
+    time_pipeline.py         # 一首歌的各环节耗时（冷 / 热）
+    requirements-eval.txt    # 只有评测用到的依赖（mir_eval）
+tests/fakes.py               # FakeSeparator / FakeTracker，让流水线在 CI 上无模型跑通
 docs/benchmarks/
+    README.md                # 数据集获取与运行说明
     step-1-beats.md / .json  # eval_beats.py 的输出（提交进仓库）
     step-1-timing.md / .json # time_pipeline.py 的输出（提交进仓库）
 ```
@@ -42,6 +48,8 @@ docs/benchmarks/
 - `opencapo.analysis` 这个包名是第 0 步预留的；本步起它就是分析流水线。
 - `Separator` / `BeatTracker` 做成协议（Python 的 `typing.Protocol`，即只规定方法签名的接口），流水线只依赖接口。好处：单元测试用假实现在 CPU 上跑通整条流水线；换模型只换适配器。
 - `grid.py` 是纯计算，不 import torch，可在 CI 上完整测试。
+- 模型包在适配器方法里延迟 import；`opencapo.analysis` 包本身与 `deps.py` 不碰 numpy / torch，所以核心安装下运行 `opencapo analyze` 得到的是一句安装提示，不是 ImportError（有测试守着）。
+- 分轨先在内存里（`Stems`，四个 `(channels, frames)` 数组），再写成 32 位浮点 WAV 到临时目录供后续环节读；两者都随 `with` 块结束消失。
 
 ### 2.2 数据流
 
@@ -251,10 +259,10 @@ git add docs/benchmarks && git commit -m "Add step-1 beat evaluation and timing 
 
 ## 11. 验收对照
 
-| 验收项（ROADMAP 第 1 步） | 如何证明 |
-|---|---|
-| 节拍 F-measure ≥ 85%（评测脚本输出，数字进 README 或 docs） | `scripts/eval_beats.py` → `docs/benchmarks/step-1-beats.md`；README 引用 |
-| 4 分钟歌曲在一张 GPU 上：分轨 + 节拍 ≤ 90 秒 | `scripts/time_pipeline.py` → `docs/benchmarks/step-1-timing.md`（RTX 3090） |
-| `opencapo analyze` 输出含 `Beat`、`Tempo` | CI `analysis-smoke` 任务的 CLI 输出；`models` 标记测试断言 BPM |
-| 分轨文件在流程结束后不残留 | `tests/test_separate.py`：正常与异常路径下临时目录均不存在 |
-| 模型权重许可证逐个列在 `docs/plans/backend.md` | backend.md 第 2 节的许可证表 |
+| 验收项（ROADMAP 第 1 步） | 如何证明 | 状态 |
+|---|---|---|
+| 节拍 F-measure ≥ 85%（评测脚本输出，数字进 README 或 docs） | `scripts/eval_beats.py` → `docs/benchmarks/step-1-beats.md`；README 引用 | 待负责人在 GPU 上生成 |
+| 4 分钟歌曲在一张 GPU 上：分轨 + 节拍 ≤ 90 秒 | `scripts/time_pipeline.py` → `docs/benchmarks/step-1-timing.md`（RTX 3090） | 待负责人在 GPU 上生成 |
+| `opencapo analyze` 输出含 `Beat`、`Tempo` | `tests/test_pipeline.py`、`tests/test_cli.py`（假模型）；`tests/test_models.py` 与 CI `analysis-smoke` 任务（真模型，节拍器音频 BPM ≈ 120） | 已实现 |
+| 分轨文件在流程结束后不残留 | `tests/test_separate.py`（临时目录）、`tests/test_pipeline.py`（流水线正常与异常路径）、`tests/test_models.py`（真模型） | 已实现 |
+| 模型权重许可证逐个列在 `docs/plans/backend.md` | backend.md 第 2.1 节 | 已写 |

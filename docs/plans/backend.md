@@ -31,8 +31,8 @@ API 层
 
 | 环节 | 输入 | 输出 | 候选组件（均有权重、许可证明确） |
 |---|---|---|---|
-| 分轨 | 混音 | vocals / drums / bass / other | Demucs (HTDemucs)、BS-RoFormer |
-| 节拍 / 强拍 / BPM | 混音或 drums + bass | `Beat`、`Tempo` | all-in-one (mir-aidj)、Beat This!、madmom |
+| 分轨 | 混音 | vocals / drums / bass / other | **已定：Demucs `htdemucs`**（第 1 步）；备选 BS-RoFormer |
+| 节拍 / 强拍 / BPM | 混音（评测时另测 drums + bass） | `Beat`、`Tempo`、`TimeSignature` | **已定：Beat This!**（第 1 步）；备选 madmom、all-in-one |
 | 和弦 | 混音去鼓（bass + other）+ 拍网格 | `Chord`（含转位、置信度） | BTC、ChordFormer、autochord |
 | 调性 | `Chord` 序列 + 音频 | `Key` | 和弦统计规则法 + essentia key extractor 互校 |
 | 人声旋律 | vocals | 音高曲线 → 切分 → 量化到拍网格 → `Note` | RMVPE / CREPE 提取音高；音符切分与量化自写 |
@@ -40,6 +40,17 @@ API 层
 | 歌词对齐 | vocals + 文本 | `LyricSyllable` | WhisperX 的 wav2vec2 强制对齐；中文对齐模型需单独评估；英文音节切分 pyphen / CMUdict；音节挂到 `Note` 用时间最近匹配 + 单调约束 |
 
 分轨结果只在流水线内部使用，任务完成后与原音频一起删除。
+
+### 2.1 已接入的模型权重与许可证
+
+每接入一份权重在此登记（CLAUDE.md 要求）。CC-BY-NC 类及许可证不明的显式标出。
+
+| 环节 | 模型 / 权重 | 代码许可证 | 权重许可证 | 训练数据 | 备注 |
+|---|---|---|---|---|---|
+| 分轨 | Demucs v4 `htdemucs`（adefossez/demucs，PyPI `demucs` ≥ 4.1） | MIT | **未声明；按非商业对待。** 作者原话："The license of the weights is not clear: MusDB contains some data that were only usable for research purpose"，并表示无权替 Meta 或 MUSDB 版权方澄清 | MUSDB HQ + Meta 内部 800 首 | 第 1 步接入（`docs/plans/step-1.md` 决定 2）。权重首次运行时自动从 Hugging Face / Meta 文件服务器下载，不随代码分发。自部署文档须转述这一许可证状态；如发现许可证更干净且质量够的 4 轨模型，只换 `Separator` 适配器 |
+| 节拍 / 强拍 | Beat This!（CPJKU/beat_this，PyPI `beat-this` ≥ 1.1，checkpoint `final0`） | MIT | **MIT** | 16 个公开数据集，GTZAN 整体留出 | 第 1 步接入（决定 3）。不用 DBN 后处理，因此不依赖 madmom |
+
+未接入但评估过的候选：madmom 的模型文件为 **CC BY-NC-SA 4.0**（README 明示），只可作评测基线，不打包；all-in-one 权重许可证未声明；BS-RoFormer 社区权重许可证各异、部分为 CC-BY-NC-SA。
 
 ## 3. 编配
 
