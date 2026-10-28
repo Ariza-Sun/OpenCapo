@@ -18,7 +18,14 @@ dependencies = [
 # Model inference. Kept out of the core package so arranging and rendering
 # install without torch; also needs the ffmpeg command-line tools.
 analysis = [
+    "beat-this>=1.1",
+    "demucs>=4.1",
+    "einops",
     "numpy>=1.26",
+    "rotary-embedding-torch",
+    "soxr",
+    "torch>=2.1",
+    "tqdm",
 ]
 dev = [
     "hypothesis>=6.100",
@@ -46,6 +53,15 @@ strict = true
 plugins = ["pydantic.mypy"]
 files = ["src"]
 
+[[tool.mypy.overrides]]
+# Model packages ship no type information and are imported lazily.
+module = ["beat_this.*", "demucs.*", "torch", "torch.*"]
+ignore_missing_imports = true
+follow_untyped_imports = false
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = ["--strict-markers"]
+addopts = ["--strict-markers", "-m", "not models"]
+markers = [
+    "models: needs model weights and the analysis extra; run with `pytest -m models`",
+]
