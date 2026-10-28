@@ -84,6 +84,15 @@ def test_single_downbeat_anchors_but_does_not_measure() -> None:
     assert grid.time_signature is None
 
 
+def test_every_beat_a_downbeat_means_no_meter() -> None:
+    times = [0.5 * i for i in range(6)]
+    grid = build_grid(times, times)
+    assert [(b.bar_index, b.beat_in_bar) for b in grid.beats] == [
+        (0, 1), (0, 2), (0, 3), (0, 4), (1, 1), (1, 2),
+    ]  # fmt: skip
+    assert grid.time_signature is None
+
+
 def test_single_beat() -> None:
     grid = build_grid([1.0], [1.0])
     assert [(b.bar_index, b.beat_in_bar) for b in grid.beats] == [(0, 1)]

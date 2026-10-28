@@ -8,6 +8,8 @@ Rules (docs/plans/step-1.md, section 2.3):
   put into implicit bars of `n` beats so that `bar_index` starts at 0;
 - a bar that the tracker gave more than `n` beats keeps counting (a missed
   downbeat is reported as is, not repaired);
+- fewer than two downbeats, or every beat flagged as one, means the bar length
+  is unknown: bars of DEFAULT_BEATS_PER_BAR are laid out and no meter is claimed;
 - bpm is 60 over the median beat interval;
 - the meter is n/4, except that six beats per bar is written 6/8.
 """
@@ -77,6 +79,10 @@ def build_grid(beat_times: Sequence[float], downbeat_times: Sequence[float] = ()
 
     downbeats = _match_downbeats(times, downbeat_times)
     measured = beats_per_bar(downbeats)
+    if measured is not None and measured < 2:
+        # Every beat flagged as a downbeat (seen on synthetic click tracks): no
+        # usable bar information, so the downbeats are ignored altogether.
+        downbeats, measured = [], None
     n = measured if measured is not None else DEFAULT_BEATS_PER_BAR
     anchor = downbeats[0] if downbeats else 0
     downbeat_set = set(downbeats)
