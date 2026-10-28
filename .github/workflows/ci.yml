@@ -29,9 +29,41 @@ jobs:
         run: mypy
       - name: Test
         run: pytest
-      - name: CLI smoke test
+      - name: CLI reports a missing analysis install
         run: |
           python scripts/make_tone.py "$RUNNER_TEMP/tone.wav"
-          opencapo analyze "$RUNNER_TEMP/tone.wav" --out "$RUNNER_TEMP/analysis.json"
-          python -c "import sys; from opencapo.model import Analysis; Analysis.from_json(open(sys.argv[1], encoding='utf-8').read())" "$RUNNER_TEMP/analysis.json"
-          cat "$RUNNER_TEMP/analysis.json"
+          if opencapo analyze "$RUNNER_TEMP/tone.wav" --out "$RUNNER_TEMP/analysis.json" 2> "$RUNNER_TEMP/err.txt"; then
+            echo "expected a failure without the analysis extra"; exit 1
+          fi
+          cat "$RUNNER_TEMP/err.txt"
+          grep -q 'opencapo\[analysis\]' "$RUNNER_TEMP/err.txt"
+
+  # Runs the real models on CPU with a synthetic click track. Also the probe
+  # for "the analysis extra still installs on this Python".
+  analysis-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Cache model weights
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/torch
+            ~/.cache/huggingface
+          key: model-weights-${{ hashFiles('src/opencapo/analysis/separate.py', 'src/opencapo/analysis/beats.py') }}
+      - name: Install (CPU torch)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev,analysis]"
+      - name: Model tests
+        run: pytest -m models -v
+      - name: CLI smoke test
+        run: |
+          python scripts/make_tone.py "$RUNNER_TEMP/click.wav" --click 120 --seconds 12
+          opencapo analyze "$RUNNER_TEMP/click.wav" --out "$RUNNER_TEMP/analysis.json" --device cpu --timing -
+          python -c "import sys; from opencapo.model import Analysis; a = Analysis.from_json(open(sys.argv[1], encoding='utf-8').read()); assert a.tempo and a.beats, 'no beats'; print(a.tempo, a.time_signature, len(a.beats), 'beats')" "$RUNNER_TEMP/analysis.json"

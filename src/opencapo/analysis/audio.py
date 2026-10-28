@@ -102,9 +102,14 @@ def decode(
     *,
     sample_rate: int = SAMPLE_RATE,
     channels: int = CHANNELS,
-    max_duration: float = MAX_DURATION_SECONDS,
+    max_duration: float | None = None,
 ) -> Audio:
-    """Decode `path` to float32 PCM, rejecting files longer than `max_duration`."""
+    """Decode `path` to float32 PCM, rejecting files longer than `max_duration`.
+
+    `max_duration` defaults to MAX_DURATION_SECONDS (requirements 5.1).
+    """
+    if max_duration is None:
+        max_duration = MAX_DURATION_SECONDS
     if not path.is_file():
         raise InputError(f"audio file not found: {path}")
     # The container's own length is checked first so an over-long file is
