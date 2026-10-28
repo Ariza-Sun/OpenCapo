@@ -19,7 +19,7 @@ API 层
    │        ▼
    ├──▶ 结果存储：结构化 JSON（分析结果）+ 当前调整参数
    │
-   └──▶ 编配 + 渲染服务：指法 / 节奏型 / 简谱 → SVG → PNG / PDF / MusicXML / MIDI / ChordPro
+   └──▶ 编配 + 渲染服务：指法 / 节奏型 / 简谱 → SVG → PNG / PDF / MusicXML
 ```
 
 设计原则：
@@ -63,7 +63,6 @@ API 层
 | 歌词 | 自绘，音节对齐到简谱音符的 x 坐标 |
 | 页面 | SVG → PNG（第一页预览）/ PDF（多页） |
 | MusicXML | music21 生成；含和弦符号、六线谱、歌词音节 |
-| MIDI | 和弦轨（按节奏型或整拍）+ 旋律轨 + 拍点 |
 
 排版标准：`docs/reference/desperado-sheet.webp`。
 
