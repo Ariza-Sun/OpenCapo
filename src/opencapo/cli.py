@@ -6,13 +6,10 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from opencapo import __version__
+from opencapo.errors import InputError
 from opencapo.model import Analysis
 
 AUDIO_EXTENSIONS = frozenset({".mp3", ".m4a", ".ogg", ".opus", ".wav", ".flac"})
-
-
-class InputError(Exception):
-    """A problem with the user's input, reported as a one-line message."""
 
 
 def build_parser() -> argparse.ArgumentParser:

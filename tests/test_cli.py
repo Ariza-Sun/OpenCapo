@@ -10,11 +10,10 @@ from opencapo.model import Analysis
 MAKE_TONE = Path(__file__).parents[1] / "scripts" / "make_tone.py"
 
 
-@pytest.fixture
-def tone(tmp_path: Path) -> Path:
-    path = tmp_path / "Example Song.wav"
-    subprocess.run([sys.executable, str(MAKE_TONE), str(path)], check=True)
-    return path
+def test_make_tone_script(tmp_path: Path) -> None:
+    path = tmp_path / "tone.wav"
+    subprocess.run([sys.executable, str(MAKE_TONE), str(path), "--seconds", "1"], check=True)
+    assert path.stat().st_size > 44100
 
 
 def test_analyze_writes_valid_json(tone: Path, tmp_path: Path) -> None:

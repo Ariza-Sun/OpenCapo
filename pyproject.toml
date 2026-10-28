@@ -15,9 +15,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Model inference. Kept out of the core package so arranging and rendering
+# install without torch; also needs the ffmpeg command-line tools.
+analysis = [
+    "numpy>=1.26",
+]
 dev = [
     "hypothesis>=6.100",
     "mypy>=1.10",
+    "numpy>=1.26",
     "pytest>=8",
     "ruff>=0.6",
 ]
