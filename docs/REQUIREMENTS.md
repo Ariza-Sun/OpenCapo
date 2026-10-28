@@ -93,7 +93,8 @@ OpenCapo 的目标：
 | 对象 | 字段 | 已定内容 |
 |---|---|---|
 | `Beat` | time, is_downbeat, bar_index, beat_in_bar | 做到小节 + 拍 |
-| `Tempo` | bpm（全局） | 只要全局 BPM，不做局部速度曲线 |
+| `Tempo` | bpm（全局） | 只要全局 BPM，不做局部速度曲线；单位是每分钟多少个 `Beat` |
+| `TimeSignature` | numerator, denominator | 拍号。numerator = 每小节拍数（由强拍间距推出）；denominator 默认 4，每小节 6 拍记为 6/8。约定一个 `Beat` 对应一个 denominator 音符时值，`Note` 的拍网格与 BPM 都以此为单位。3/4 与 6/8 的自动区分不可靠，按上述规则记录 |
 | `Key` | tonic, mode(major/minor), 置信度 | 做。简谱的 1=X 和变调夹换算都依赖它 |
 | `Chord` | start, end, root, quality, bass（转位）, 置信度 | 见下 |
 | `Note`（人声旋律） | start, end, pitch(MIDI), 量化后的位置与时值（start_tick、duration_ticks，以拍网格为单位）；附点、连音线、三连音在渲染时推出 | 只做人声旋律；必须到音符并量化到拍网格，供简谱渲染 |

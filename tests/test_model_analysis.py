@@ -14,6 +14,7 @@ from opencapo.model import (
     Mode,
     Note,
     Tempo,
+    TimeSignature,
 )
 
 
@@ -131,7 +132,7 @@ class TestLyricSyllable:
 class TestAnalysis:
     def test_empty_is_valid(self) -> None:
         empty = Analysis()
-        assert empty.schema_version == 1
+        assert empty.schema_version == 2
         assert empty.beats == () and empty.tempo is None and empty.key is None
 
     def test_has_no_stem_field(self) -> None:
@@ -204,14 +205,30 @@ class TestAnalysis:
             Analysis(duration=duration)
 
 
-class TestSchemaVersion:
-    def test_unknown_version_is_rejected(self) -> None:
+class TestTimeSignature:
+    @pytest.mark.parametrize(("num", "den"), [(4, 4), (3, 4), (6, 8), (1, 2), (7, 16)])
+    def test_valid(self, num: int, den: int) -> None:
+        assert TimeSignature(numerator=num, denominator=den).numerator == num
+
+    @pytest.mark.parametrize(("num", "den"), [(0, 4), (4, 3), (4, 0), (4, 32)])
+    def test_invalid(self, num: int, den: int) -> None:
         with pytest.raises(ValidationError):
-            Analysis.from_json('{"schema_version": 2}')
+            TimeSignature(numerator=num, denominator=den)
+
+    def test_no_silent_coercion(self) -> None:
+        with pytest.raises(ValidationError):
+            TimeSignature.from_json('{"numerator": 4, "denominator": "4"}')
+
+
+class TestSchemaVersion:
+    @pytest.mark.parametrize("version", [1, 3])
+    def test_other_versions_are_rejected(self, version: int) -> None:
+        with pytest.raises(ValidationError):
+            Analysis.from_json(f'{{"schema_version": {version}}}')
 
     def test_missing_version_is_rejected(self) -> None:
         with pytest.raises(ValidationError, match="schema_version is missing"):
             Analysis.from_json("{}")
 
     def test_version_is_written(self) -> None:
-        assert '"schema_version": 1' in Analysis().to_json()
+        assert '"schema_version": 2' in Analysis().to_json()

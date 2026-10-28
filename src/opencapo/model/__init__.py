@@ -10,6 +10,7 @@ from opencapo.model.analysis import (
     LyricSyllable,
     Note,
     Tempo,
+    TimeSignature,
 )
 from opencapo.model.arrangement import STRUM_AUTO, STRUM_NONE, TRANSPOSE_RANGE, Arrangement
 from opencapo.model.music import ChordQuality, Mode
@@ -30,4 +31,5 @@ __all__ = [
     "Mode",
     "Note",
     "Tempo",
+    "TimeSignature",
 ]

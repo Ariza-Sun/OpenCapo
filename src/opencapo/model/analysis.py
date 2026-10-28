@@ -16,7 +16,7 @@ from pydantic import (
 from opencapo.model._base import Model
 from opencapo.model.music import ChordQuality, Confidence, Mode, PitchClass, Seconds
 
-SCHEMA_VERSION: Final = 1
+SCHEMA_VERSION: Final = 2
 
 # Quantization grid for notes: each beat of the beat grid is split into this many
 # ticks. 12 divides evenly by 2, 3, 4 and 6 (sixteenths and triplets).
@@ -38,6 +38,16 @@ class Beat(Model):
 
 class Tempo(Model):
     bpm: Annotated[StrictFloat, Field(gt=0.0)]
+
+
+class TimeSignature(Model):
+    """Meter as written in the header: beats per bar over the beat unit.
+
+    One Beat object is one `denominator` note, so ticks and bpm share that unit.
+    """
+
+    numerator: Annotated[StrictInt, Field(ge=1)]
+    denominator: Literal[2, 4, 8, 16]
 
 
 class Key(Model):
@@ -108,12 +118,13 @@ class Analysis(Model):
     Stems are deliberately absent; they never leave the pipeline.
     """
 
-    schema_version: Literal[1] = SCHEMA_VERSION
+    schema_version: Literal[2] = SCHEMA_VERSION
     title: StrictStr | None = None
     artist: StrictStr | None = None
     duration: Annotated[StrictFloat, Field(gt=0.0)] | None = None
     beats: tuple[Beat, ...] = ()
     tempo: Tempo | None = None
+    time_signature: TimeSignature | None = None
     key: Key | None = None
     chords: tuple[Chord, ...] = ()
     notes: tuple[Note, ...] = ()
