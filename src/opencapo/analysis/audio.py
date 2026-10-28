@@ -33,7 +33,7 @@ class Audio:
         return int(self.samples.shape[1]) / self.sample_rate
 
     def mono(self) -> NDArray[np.float32]:
-        return self.samples.mean(axis=0, dtype=np.float32)
+        return np.asarray(self.samples.mean(axis=0), dtype=np.float32)
 
 
 def _format_duration(seconds: float) -> str:

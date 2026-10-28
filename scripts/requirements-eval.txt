@@ -1,0 +1,2 @@
+# Only for the evaluation scripts (scripts/eval_beats.py); not a package dependency.
+mir_eval>=0.7
