@@ -3,7 +3,15 @@
 from itertools import pairwise
 from typing import Annotated, Any, Final, Literal, Self
 
-from pydantic import Field, ValidationInfo, model_validator
+from pydantic import (
+    Field,
+    StrictBool,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
+    ValidationInfo,
+    model_validator,
+)
 
 from opencapo.model._base import Model
 from opencapo.model.music import ChordQuality, Confidence, Mode, PitchClass, Seconds
@@ -17,9 +25,9 @@ TICKS_PER_BEAT = 12
 
 class Beat(Model):
     time: Seconds
-    is_downbeat: bool
-    bar_index: Annotated[int, Field(ge=0)]
-    beat_in_bar: Annotated[int, Field(ge=1)]  # 1-based, as counted aloud
+    is_downbeat: StrictBool
+    bar_index: Annotated[StrictInt, Field(ge=0)]
+    beat_in_bar: Annotated[StrictInt, Field(ge=1)]  # 1-based, as counted aloud
 
     @model_validator(mode="after")
     def _downbeat_is_first_beat(self) -> Self:
@@ -29,7 +37,7 @@ class Beat(Model):
 
 
 class Tempo(Model):
-    bpm: Annotated[float, Field(gt=0.0)]
+    bpm: Annotated[StrictFloat, Field(gt=0.0)]
 
 
 class Key(Model):
@@ -64,9 +72,9 @@ class Note(Model):
 
     start: Seconds
     end: Seconds
-    pitch: Annotated[int, Field(ge=0, le=127)]  # MIDI
-    start_tick: Annotated[int, Field(ge=0)]  # counted from the first beat
-    duration_ticks: Annotated[int, Field(ge=1)]
+    pitch: Annotated[StrictInt, Field(ge=0, le=127)]  # MIDI
+    start_tick: Annotated[StrictInt, Field(ge=0)]  # counted from the first beat
+    duration_ticks: Annotated[StrictInt, Field(ge=1)]
 
     @model_validator(mode="after")
     def _check(self) -> Self:
@@ -82,9 +90,9 @@ class Note(Model):
 class LyricSyllable(Model):
     start: Seconds
     end: Seconds
-    text: Annotated[str, Field(min_length=1)]
-    line_index: Annotated[int, Field(ge=0)]
-    note_ref: Annotated[int, Field(ge=0)] | None = None  # index into Analysis.notes
+    text: Annotated[StrictStr, Field(min_length=1)]
+    line_index: Annotated[StrictInt, Field(ge=0)]
+    note_ref: Annotated[StrictInt, Field(ge=0)] | None = None  # index into Analysis.notes
 
     @model_validator(mode="after")
     def _check(self) -> Self:
@@ -101,9 +109,9 @@ class Analysis(Model):
     """
 
     schema_version: Literal[1] = SCHEMA_VERSION
-    title: str | None = None
-    artist: str | None = None
-    duration: Annotated[float, Field(gt=0.0)] | None = None
+    title: StrictStr | None = None
+    artist: StrictStr | None = None
+    duration: Annotated[StrictFloat, Field(gt=0.0)] | None = None
     beats: tuple[Beat, ...] = ()
     tempo: Tempo | None = None
     key: Key | None = None
@@ -119,7 +127,7 @@ class Analysis(Model):
     @classmethod
     def _require_version_in_json(cls, data: Any, info: ValidationInfo) -> Any:
         # The default version is for building new results in code; stored JSON
-        # must say which version it is rather than have one guessed for it.
+        # must state its version rather than have one guessed for it.
         from_json = bool(info.context and info.context.get("from_json"))
         if from_json and isinstance(data, dict) and "schema_version" not in data:
             raise ValueError("schema_version is missing")

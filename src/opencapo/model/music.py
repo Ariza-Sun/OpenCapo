@@ -3,17 +3,17 @@
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import Field
+from pydantic import Field, StrictFloat, StrictInt
 
 # Pitch class as an integer, C = 0 … B = 11. Spelling (F# vs Gb) depends on the
 # key and is decided at arrangement / render time, never stored.
-PitchClass = Annotated[int, Field(ge=0, le=11)]
+PitchClass = Annotated[StrictInt, Field(ge=0, le=11)]
 
 # Model confidence in [0, 1].
-Confidence = Annotated[float, Field(ge=0.0, le=1.0)]
+Confidence = Annotated[StrictFloat, Field(ge=0.0, le=1.0)]
 
 # Seconds from the start of the source audio.
-Seconds = Annotated[float, Field(ge=0.0)]
+Seconds = Annotated[StrictFloat, Field(ge=0.0)]
 
 
 class Mode(StrEnum):

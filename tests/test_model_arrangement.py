@@ -46,3 +46,17 @@ def test_only_user_adjustable_fields() -> None:
     }
     with pytest.raises(ValidationError):
         Arrangement(capo=3)  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"transpose": true}',
+        '{"transpose": "2"}',
+        '{"simplify_chords": 1}',
+        '{"fingering_key": 2.0}',
+    ],
+)
+def test_no_silent_coercion(raw: str) -> None:
+    with pytest.raises(ValidationError):
+        Arrangement.from_json(raw)

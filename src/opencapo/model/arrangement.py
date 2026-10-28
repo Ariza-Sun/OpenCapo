@@ -6,7 +6,7 @@ sheet means going back to Arrangement().
 
 from typing import Annotated
 
-from pydantic import Field
+from pydantic import Field, StrictBool, StrictInt, StrictStr
 
 from opencapo.model._base import Model
 from opencapo.model.music import PitchClass
@@ -19,11 +19,11 @@ TRANSPOSE_RANGE = 6
 
 class Arrangement(Model):
     # Singing key relative to the original key, in semitones.
-    transpose: Annotated[int, Field(ge=-TRANSPOSE_RANGE, le=TRANSPOSE_RANGE)] = 0
+    transpose: Annotated[StrictInt, Field(ge=-TRANSPOSE_RANGE, le=TRANSPOSE_RANGE)] = 0
     # Tonic of the fingering key; its mode follows the song. None = pick the
     # fingering key with the lowest capo.
     fingering_key: PitchClass | None = None
-    strum_pattern: Annotated[str, Field(min_length=1)] = STRUM_AUTO
-    simplify_chords: bool = True
+    strum_pattern: Annotated[StrictStr, Field(min_length=1)] = STRUM_AUTO
+    simplify_chords: StrictBool = True
     # Pasted lyrics; None = use the recognized lyrics.
-    lyrics_text: str | None = None
+    lyrics_text: StrictStr | None = None

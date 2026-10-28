@@ -6,9 +6,11 @@ from pydantic import BaseModel, ConfigDict
 class Model(BaseModel):
     """Immutable, strictly-shaped base for every serialized object."""
 
-    # strict: no silent coercion ("3" -> 3, true -> 1); enums and tuples must be
-    # passed as such from Python, while JSON input uses plain values and arrays.
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True, allow_inf_nan=False)
+    # Scalar fields use pydantic's Strict* types so nothing is silently coerced
+    # ("3" -> 3, true -> 1). Strictness is per field, not model-wide: a model-wide
+    # strict mode would also reject JSON arrays for tuples once a model has a
+    # "before" validator, because those validate JSON in Python mode.
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
     def to_json(self) -> str:
         return self.model_dump_json(indent=2)
