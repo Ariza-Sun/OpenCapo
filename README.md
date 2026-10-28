@@ -13,11 +13,29 @@ An open-source Discord bot that turns a song's audio into a guitar play-along sh
 | [CLAUDE.md](CLAUDE.md) | 给 agent 的工作说明与硬性边界 |
 | [docs/plans/frontend-discord.md](docs/plans/frontend-discord.md) | Discord 前端计划：命令、控件、约束、与后端的接口 |
 | [docs/plans/backend.md](docs/plans/backend.md) | 后端计划：架构、分析流水线、编配、渲染、存储、部署 |
+| [docs/plans/step-0.md](docs/plans/step-0.md) | 第 0 步实现计划：项目骨架、数据模型、CLI |
 | [docs/reference/desperado-sheet.webp](docs/reference/desperado-sheet.webp) | 弹唱谱默认排版标准 |
 
 ## 状态
 
-需求定稿，尚未开始编码。
+阶段 1 第 0 步（项目骨架与数据模型）已完成，见 [docs/plans/step-0.md](docs/plans/step-0.md)。分析、编配、渲染与 Discord Bot 尚未开始。
+
+## 开发
+
+需要 Python ≥ 3.11。
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+ruff format --check . && ruff check . && mypy && pytest
+```
+
+CLI（当前只输出空的分析结果）：
+
+```bash
+python scripts/make_tone.py tone.wav
+opencapo analyze tone.wav --out analysis.json
+```
 
 ## 许可证
 

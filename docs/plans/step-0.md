@@ -66,6 +66,8 @@ tests/
 - 构造即校验（区间、取值范围、排序），坏数据在写入端就报错，而不是在渲染时才炸。
 - 自带 JSON 序列化 / 反序列化；`Analysis.model_dump_json()` / `Analysis.model_validate_json()`，外面再包一层 `to_json()` / `from_json()` 作为项目内的稳定接口。
 - `extra="forbid"` 保证未知字段不会被静默丢弃（"往返无损"的另一面）。
+- 标量字段用 pydantic 的 `StrictInt` / `StrictFloat` / `StrictBool` / `StrictStr`，拒绝静默类型转换（`"3"` → 3、`true` → 1）；float 字段仍接受整数。没有用模型级 `strict=True`：模型一旦带 before 校验器，pydantic 会按 Python 模式校验 JSON，模型级严格模式随之拒绝 JSON 数组充当 tuple。
+- 列表字段用 `tuple`，保证冻结后真正不可变。
 
 ### 4.2 基础类型（`model/music.py`）
 
@@ -89,15 +91,15 @@ tests/
 | `LyricSyllable` | `start`, `end`, `text`, `line_index`, `note_ref: int \| None` | `0 ≤ start ≤ end`；`text` 非空；`line_index ≥ 0`；`note_ref` 为 `Analysis.notes` 的下标，M2 之前为 `None` |
 | `Analysis` | `schema_version`, `title`, `artist`, `duration`, `beats`, `tempo`, `key`, `chords`, `notes`, `lyrics` | 见下 |
 
-**`Note` 的量化时值**：量化结果用整数刻度存，`TICKS_PER_BEAT = 12`（作为模块常量，也写进文档），刻度从 `beats[0]` 起算。12 能整除 2 / 3 / 4 / 6，覆盖十六分音符和三连音。存整数而不是分数或浮点，保证 JSON 往返精确。附点、连音线是**记谱**层面的事：一个跨小节线的音在渲染时才拆成两段加连音线，附点由 `duration_ticks` 推出（提供只读属性），因此不单独存储（见第 7 节决定 3）。
+**`Note` 的量化时值**：量化结果用整数刻度存，`TICKS_PER_BEAT = 12`（作为模块常量，也写进文档），刻度从 `beats[0]` 起算。12 能整除 2 / 3 / 4 / 6，覆盖十六分音符和三连音。存整数而不是分数或浮点，保证 JSON 往返精确。附点、连音线是**记谱**层面的事：一个跨小节线的音在渲染时才拆成两段加连音线，附点也由渲染根据 `duration_ticks` 推出，因此都不单独存储（见第 7 节决定 3）。
 
 **`Analysis` 顶层**：
-- `schema_version: int`，从 1 开始。阶段 1 内字段有增改就加 1；读到不认识的版本直接报错，不做猜测性兼容（第 6 步之前没有持久化数据，迁移成本为零）。
+- `schema_version: Literal[1]`，从 1 开始。阶段 1 内字段有增改就加 1；读到不认识的版本、或 JSON 里缺这个字段，都直接报错，不做猜测性兼容（第 6 步之前没有持久化数据，迁移成本为零）。在代码里新建 `Analysis` 时自动填当前版本。
 - `title`、`artist`：可选，页眉用；CLI 未给 `--title` 时用文件名（去扩展名）。
 - `duration`：音频时长（秒），可选，第 1 步解码后填。
 - `tempo`、`key`：可选（`None` = 尚未分析）。
 - `beats`、`chords`、`notes`、`lyrics`：列表，默认空。**空 `Analysis` 是合法的**，这就是本步 CLI 的输出。
-- 跨对象校验：`beats` 按时间严格递增；`chords` 按 `start` 排序且互不重叠（没有和弦的区间就是空着，不用 "N" 占位）；`notes` 按 `start` 排序；`lyrics` 按 `start` 排序、`line_index` 单调不减；`note_ref` 不越界。
+- 跨对象校验：`beats` 按时间严格递增；`chords` 按 `start` 排序且互不重叠（没有和弦的区间就是空着，不用 "N" 占位）；`notes` 按 `start` 排序且在秒和 tick 上都互不重叠（人声旋律是单声部）；`beats` 的 `bar_index` 单调不减；`lyrics` 按 `start` 排序、`line_index` 单调不减；`note_ref` 不越界。
 - "和弦边界落在拍上"是第 2 步的验收项，不做成模型层的硬校验（否则第 2 步之前的测试数据都得造拍网格）。
 
 ### 4.4 调整参数（`model/arrangement.py`）
@@ -122,11 +124,11 @@ opencapo analyze <audio> --out <json> [--title TEXT] [--artist TEXT]
 
 - 用标准库 `argparse`，不引入 click / typer。`python -m opencapo` 等价于 `opencapo`（`[project.scripts]` 注册）。
 - 本步行为：检查文件存在、扩展名属于需求 5.1 的六种（mp3 / m4a / ogg / opus / wav / flac）→ 构造空 `Analysis`（只填 `title` / `artist`）→ 写到 `--out`。`--out -` 写到标准输出。
-- 失败不静默：文件不存在、格式不支持时，向 stderr 输出一句可读的原因，退出码 1；参数错误由 argparse 处理，退出码 2。
+- 失败不静默：文件不存在、格式不支持、输出文件写不进去时，向 stderr 输出一句可读的原因，退出码 1；参数错误由 argparse 处理，退出码 2。
 - 8 分钟时长上限要解码音频才能判断，放到第 1 步。
 - `--lyrics` 等参数等第 5 步真正用到时再加，本步不预留空参数。
 
-**示例音频**：不往仓库里提交任何真实歌曲。测试里用标准库 `wave` 现场生成一段 3 秒的正弦波 wav（写到 pytest 的 `tmp_path`），对它跑 CLI，再用 `Analysis.from_json()` 读回校验。CI 里另跑一次同样的冒烟命令，产出的 JSON 作为 CI 日志的一部分，便于对照验收项。
+**示例音频**：不往仓库里提交任何真实歌曲。`scripts/make_tone.py` 用标准库 `wave` 生成一段 3 秒的正弦波 wav；测试里把它写到 pytest 的 `tmp_path`，对它跑 CLI，再用 `Analysis.from_json()` 读回校验。CI 里另跑一次同样的冒烟命令，产出的 JSON 作为 CI 日志的一部分，便于对照验收项。
 
 ## 6. 测试
 
