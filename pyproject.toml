@@ -25,6 +25,7 @@ analysis = [
     "rotary-embedding-torch",
     "soxr",
     "torch>=2.1",
+    "torchaudio>=2.1",  # imported by beat_this; must match the torch build (CPU / CUDA)
     "tqdm",
 ]
 dev = [

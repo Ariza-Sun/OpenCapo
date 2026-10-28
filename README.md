@@ -32,7 +32,7 @@ pip install -e ".[dev]"
 ruff format --check . && ruff check . && mypy && pytest
 ```
 
-跑分析流水线还要装模型依赖（torch、demucs、beat-this；GPU 版 torch 按 pytorch.org 的说明装）：
+跑分析流水线还要装模型依赖（torch、torchaudio、demucs、beat-this）。torch 与 torchaudio 要来自同一个构建：GPU 机器按 pytorch.org 的说明先装对应 CUDA 版本的两者，再装下面的包；纯 CPU 机器可先 `pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu`：
 
 ```bash
 pip install -e ".[dev,analysis]"

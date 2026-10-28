@@ -27,6 +27,7 @@
 3. **安装与运行**（在 GPU 服务器上）：
 
    ```bash
+   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128   # 按服务器的 CUDA 版本选，见 pytorch.org
    pip install -e ".[analysis]" -r scripts/requirements-eval.txt
    python scripts/eval_beats.py --audio /data/gtzan --annotations /data/beat_this_annotations/gtzan/annotations/beats \
        --inputs mix,drums_bass --device cuda
