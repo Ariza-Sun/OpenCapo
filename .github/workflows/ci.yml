@@ -29,3 +29,9 @@ jobs:
         run: mypy
       - name: Test
         run: pytest
+      - name: CLI smoke test
+        run: |
+          python scripts/make_tone.py "$RUNNER_TEMP/tone.wav"
+          opencapo analyze "$RUNNER_TEMP/tone.wav" --out "$RUNNER_TEMP/analysis.json"
+          python -c "import sys; from opencapo.model import Analysis; Analysis.from_json(open(sys.argv[1], encoding='utf-8').read())" "$RUNNER_TEMP/analysis.json"
+          cat "$RUNNER_TEMP/analysis.json"
