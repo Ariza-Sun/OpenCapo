@@ -1,7 +1,7 @@
 # 第 0 步实现计划：项目骨架与数据模型
 
 > 对应：`docs/ROADMAP.md` 第 0 步；需求 `docs/REQUIREMENTS.md` 5.2（数据模型）、5.3 / 5.5（调整参数）。
-> 状态：草稿，待负责人确认第 7 节的决定后开工。
+> 状态：第 7 节决定已全部确认，实施中。
 
 ## 1. 目标与范围
 
@@ -50,7 +50,7 @@ tests/
 | 项 | 选择 | 说明 |
 |---|---|---|
 | 构建后端 | hatchling | 纯 Python，配置少 |
-| Python 版本 | `requires-python = ">=3.11"`；CI 跑 3.11 与 3.12 | 第 1 步确定模型依赖后再收紧（madmom、部分 torch 生态对 3.13 支持不稳） |
+| Python 版本 | `requires-python = ">=3.11"`；CI 跑 3.11 / 3.12 / 3.13 | 第 1 步确定模型依赖后再收紧下限或加上限（madmom、部分 torch 生态对新版本支持滞后） |
 | 格式化 + lint | ruff（`ruff format` + `ruff check`） | 一个工具覆盖 black / isort / flake8 |
 | 类型检查 | mypy（`src/` 开 strict） | 数据模型是全项目的契约，值得严格 |
 | 测试 | pytest + hypothesis | hypothesis 用于 JSON 往返的属性测试 |
@@ -138,12 +138,12 @@ opencapo analyze <audio> --out <json> [--title TEXT] [--artist TEXT]
 | 版本 | `schema_version` 不认识时报错 |
 | CLI | 正常输出、`--out -`、默认标题取文件名、文件不存在、格式不支持、缺参数 |
 
-## 7. 需要负责人拍板的决定
+## 7. 负责人决定（已全部确认）
 
 1. **已定：数据模型用 pydantic v2**。备选是标准库 dataclass + 手写校验与序列化（零依赖，但多一块自维护代码），未采用。
 2. **已定：第 13、14 种和弦性质为 `dim7`、`hdim7`（m7b5）**。需求列了 12 种，"等 14 种"。选这两个是因为它们在 Isophonics（Harte 记法）标注和 BTC 等大词表和弦模型的类别里都有，模型可直接输出，mir_eval 评测也无需额外映射。未采用 `add9`、`7sus4`：吉他谱常见，但 Harte 词表模型不输出。`minmaj7` 同在这些词表里，但弹唱谱罕见，暂不加。第 2 步选型时报告各候选模型能输出哪些性质，届时如需调整枚举，升 `schema_version` 即可。
 3. **已定：`Note` 只存"声音"，不存"记谱"**。存观测值 `start` / `end` / `pitch` 与量化值 `start_tick` / `duration_ticks`（整数，`TICKS_PER_BEAT = 12`，定义在拍网格上）。附点、连音线、三连音由渲染推出：附点由时值决定，单独存会冗余且可能矛盾；连音线取决于拍号、按拍分组规则和换行，属于排版规则；music21 也是由时值自动拆分加 tie。需求 5.2 的措辞已同步修改。未采用：照字面额外存 `dotted` / `tie` 并做一致性校验。
-4. **Python 版本下限 3.11**，第 1 步确定模型依赖后再收紧。
+4. **已定：`requires-python = ">=3.11"`，CI 测 3.11 / 3.12 / 3.13**。第 1 步确定模型栈后再收紧。未采用：`>=3.12`（放弃仍在维护期的 3.11）、锁定单一版本（本地开发与自部署被卡死）。部署镜像另行锁定确切版本。
 
 ## 8. 已知缺口（不在本步补，记下来以免遗漏）
 
@@ -172,7 +172,7 @@ opencapo analyze <audio> --out <json> [--title TEXT] [--artist TEXT]
 一个 PR，按以下提交顺序推进，每个提交本地四条检查都过：
 
 1. `pyproject.toml`、包骨架、`__version__`、ruff / mypy / pytest 配置、一个冒烟测试。
-2. `.github/workflows/ci.yml`：`push` 到 main 与 `pull_request` 触发；3.11 / 3.12 矩阵；`pip install -e ".[dev]"` → `ruff format --check` → `ruff check` → `mypy src` → `pytest` → CLI 冒烟。
+2. `.github/workflows/ci.yml`：`push` 到 main 与 `pull_request` 触发；3.11 / 3.12 / 3.13 矩阵；`pip install -e ".[dev]"` → `ruff format --check` → `ruff check` → `mypy src` → `pytest` → CLI 冒烟。
 3. 基础类型 + 分析模型 + 校验测试。
 4. `Arrangement` + 测试。
 5. 金样 JSON + 往返属性测试。
