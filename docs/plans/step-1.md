@@ -207,9 +207,14 @@ git add docs/benchmarks && git commit -m "Add step-1 beat evaluation and timing 
 - 评测口径：mir_eval `beat.f_measure`（70 ms 容差），拍点与强拍分别算、按曲目平均、按流派分组；验收门槛只对拍点 F1，强拍 F1 报数字不设门槛。保留"drums + bass 重混后跟踪"对照组。
 - 未采用：三个候选全跑（madmom 需从 git 编译安装、all-in-one 的 NATTEN 常装不上，而按选定规则 Beat This! 几乎是预定答案，不值得花服务器时间）。
 
-### 4. 待定：评测集
+### 4. 已定：评测集用 GTZAN（GTZAN-Rhythm 标注）
 
-GTZAN-Rhythm 还是 Ballroom，以及音频与标注的获取方式。
+- 1000 首 × 30 秒、10 个流派；jazz.00054 已知损坏，实际约 999 首，脚本报出缺失 / 损坏文件并记录实际曲目数。
+- 需求第 7、9 节点名 GTZAN；且 GTZAN 是 Beat This! 的留出测试集，结果干净。
+- 标注：CPJKU/beat_this_annotations（MIT）的 `gtzan/annotations/beats/`，源自 Marchand & Peeters 2015 的 GTZAN-Rhythm（经 Böck 整理），含拍点与强拍。
+- 音频：原始 UVic 服务器已下线，从 Kaggle 或 Hugging Face `marsyas/gtzan` 镜像下载，目录结构 `genres_original/<genre>/<genre>.000NN.wav`。
+- 音频与标注都不进仓库；下载与目录约定写在 `docs/benchmarks/README.md`，由负责人本地的 agent 在服务器上准备。
+- 未采用：Ballroom（在 Beat This! 的训练集里，数字偏高，不能作验收依据）。
 
 ### 5. 待定：拍号字段
 
