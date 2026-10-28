@@ -1,7 +1,7 @@
 # 第 1 步实现计划：分轨 + 节拍 + BPM
 
 > 对应：`docs/ROADMAP.md` 第 1 步；需求 `docs/REQUIREMENTS.md` 5.1（输入与时长上限）、5.2（`Beat`、`Tempo`、`Stem`）、7（处理时间、可观测性、可测试性、许可证）。
-> 状态：计划草稿，第 8 节的决定逐个确认中；全部确认后开始实现。
+> 状态：第 8 节决定已全部确认，实施中。
 
 ## 1. 目标与范围
 
@@ -180,7 +180,7 @@ git add docs/benchmarks && git commit -m "Add step-1 beat evaluation and timing 
 ## 7. 数据模型改动
 
 - `Analysis.duration` 由本步填写，字段已存在，不改。
-- 拍号：见第 8 节决定 5。若决定加字段，顺序是：改 `REQUIREMENTS.md` 5.2 → `schema_version` 升到 2 → 改 `tests/data/analysis_full.json` 金样与属性测试 → 实现。
+- 新增 `TimeSignature`（`numerator ≥ 1`，`denominator ∈ {2, 4, 8, 16}`），`Analysis.time_signature: TimeSignature | None`，默认 `None`；`schema_version` 升到 2（第 8 节决定 5）。顺序：改 `REQUIREMENTS.md` 5.2 → 改模型、金样 `tests/data/analysis_full.json` 与属性测试 → 实现填写逻辑。
 
 ## 8. 负责人决定
 
@@ -216,9 +216,14 @@ git add docs/benchmarks && git commit -m "Add step-1 beat evaluation and timing 
 - 音频与标注都不进仓库；下载与目录约定写在 `docs/benchmarks/README.md`，由负责人本地的 agent 在服务器上准备。
 - 未采用：Ballroom（在 Beat This! 的训练集里，数字偏高，不能作验收依据）。
 
-### 5. 待定：拍号字段
+### 5. 已定：加 `TimeSignature(numerator, denominator)` 字段，本步填写，`schema_version` 升到 2
 
-见 `step-0.md` 第 8 节的缺口。
+- 节拍模型只能给出每小节拍数 `n`；填写规则：`numerator = n`，`denominator = 4`，仅当 `n == 6` 时记为 6/8。
+- 约定：**一个 `Beat` 对象 = 一个 denominator 音符时值**，tick（`TICKS_PER_BEAT`）与 `Tempo.bpm`（每分钟多少个 `Beat`）都以此为单位，MusicXML 的时值换算由此确定。
+- 字段可选：没有拍点时为 `None`。
+- 已知缺口：按附点四分音符标注习惯跟踪出的 6/8 歌会得到 2/4（内部一致，但节奏型推荐会按 2/4 给）；3/4 与 6/8 的自动区分没有可靠方法，B、C 两案同样躲不开。
+- 顺序：先改 `REQUIREMENTS.md` 5.2 的对象表 → `schema_version` 升 2、改金样与测试 → 实现。
+- 未采用：只加 `beats_per_bar`（分母迟早要定，只是把同一规则挪到第 4 步）；不加字段、第 3 步现算（三个消费者各算一遍，无单一事实来源）。
 
 ## 9. 已知缺口（不在本步补）
 
