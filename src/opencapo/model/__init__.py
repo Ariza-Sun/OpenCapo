@@ -11,12 +11,17 @@ from opencapo.model.analysis import (
     Note,
     Tempo,
 )
+from opencapo.model.arrangement import STRUM_AUTO, STRUM_NONE, TRANSPOSE_RANGE, Arrangement
 from opencapo.model.music import ChordQuality, Mode
 
 __all__ = [
     "SCHEMA_VERSION",
+    "STRUM_AUTO",
+    "STRUM_NONE",
     "TICKS_PER_BEAT",
+    "TRANSPOSE_RANGE",
     "Analysis",
+    "Arrangement",
     "Beat",
     "Chord",
     "ChordQuality",
