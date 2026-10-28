@@ -9,6 +9,8 @@ An open-source Discord bot that turns a song's audio into a guitar play-along sh
 | 文档 | 内容 |
 |---|---|
 | [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) | 阶段 1 需求：做什么、做到什么程度、验收标准、后续开发 |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 分步路线图：先做什么后做什么，每步的验收标准 |
+| [CLAUDE.md](CLAUDE.md) | 给 agent 的工作说明与硬性边界 |
 | [docs/plans/frontend-discord.md](docs/plans/frontend-discord.md) | Discord 前端计划：命令、控件、约束、与后端的接口 |
 | [docs/plans/backend.md](docs/plans/backend.md) | 后端计划：架构、分析流水线、编配、渲染、存储、部署 |
 | [docs/reference/desperado-sheet.webp](docs/reference/desperado-sheet.webp) | 弹唱谱默认排版标准 |
