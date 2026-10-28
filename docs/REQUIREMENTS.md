@@ -96,7 +96,7 @@ OpenCapo 的目标：
 | `Tempo` | bpm（全局） | 只要全局 BPM，不做局部速度曲线 |
 | `Key` | tonic, mode(major/minor), 置信度 | 做。简谱的 1=X 和变调夹换算都依赖它 |
 | `Chord` | start, end, root, quality, bass（转位）, 置信度 | 见下 |
-| `Note`（人声旋律） | start, end, pitch(MIDI), 量化后的时值（起始拍、长度、附点、连音） | 只做人声旋律；必须到音符并量化到拍网格，供简谱渲染 |
+| `Note`（人声旋律） | start, end, pitch(MIDI), 量化后的位置与时值（start_tick、duration_ticks，以拍网格为单位）；附点、连音线、三连音在渲染时推出 | 只做人声旋律；必须到音符并量化到拍网格，供简谱渲染 |
 | `LyricSyllable` | start, end, text, line_index, note_ref | 中、英；音节级对齐（英文按音节拆 Des-pe-ra-do，中文一字一音），每个音节挂到一个音符 |
 | `Stem` | 音频 × {vocals, drums, bass, other} | **内部中间产物**，用于提升歌词、和弦、节拍、旋律识别的准确率；处理完成后删除，不对用户提供 |
 
