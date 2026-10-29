@@ -15,9 +15,23 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Model inference. Kept out of the core package so arranging and rendering
+# install without torch; also needs the ffmpeg command-line tools.
+analysis = [
+    "beat-this>=1.1",
+    "demucs>=4.1",
+    "einops",
+    "numpy>=1.26",
+    "rotary-embedding-torch",
+    "soxr",
+    "torch>=2.1",
+    "torchaudio>=2.1",  # imported by beat_this; must match the torch build (CPU / CUDA)
+    "tqdm",
+]
 dev = [
     "hypothesis>=6.100",
     "mypy>=1.10",
+    "numpy>=1.26",
     "pytest>=8",
     "ruff>=0.6",
 ]
@@ -35,11 +49,24 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "UP", "SIM", "RUF"]
 
+[tool.ruff.lint.per-file-ignores]
+# The benchmark scripts write Chinese Markdown, where full-width punctuation is correct.
+"scripts/*" = ["RUF001", "RUF002", "RUF003"]
+
 [tool.mypy]
 strict = true
 plugins = ["pydantic.mypy"]
 files = ["src"]
 
+[[tool.mypy.overrides]]
+# Model packages ship no type information and are imported lazily.
+module = ["beat_this.*", "demucs.*", "torch", "torch.*"]
+ignore_missing_imports = true
+follow_untyped_imports = false
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = ["--strict-markers"]
+addopts = ["--strict-markers", "-m", "not models"]
+markers = [
+    "models: needs model weights and the analysis extra; run with `pytest -m models`",
+]

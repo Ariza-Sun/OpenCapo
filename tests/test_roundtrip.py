@@ -18,6 +18,7 @@ from opencapo.model import (
     Mode,
     Note,
     Tempo,
+    TimeSignature,
 )
 
 GOLDEN = Path(__file__).parent / "data" / "analysis_full.json"
@@ -38,7 +39,7 @@ def test_golden_file_round_trips() -> None:
 
 def test_golden_file_covers_every_object() -> None:
     analysis = Analysis.from_json(GOLDEN.read_text(encoding="utf-8"))
-    assert analysis.tempo and analysis.key and analysis.duration
+    assert analysis.tempo and analysis.time_signature and analysis.key and analysis.duration
     assert analysis.beats and analysis.chords and analysis.notes and analysis.lyrics
     assert any(c.bass is not None for c in analysis.chords)
     assert any(s.note_ref is None for s in analysis.lyrics)
@@ -130,6 +131,14 @@ def analyses(draw: st.DrawFn) -> Analysis:
         duration=draw(st.none() | seconds.filter(lambda d: d > 0)),
         beats=draw(beats()),
         tempo=draw(st.none() | st.builds(Tempo, bpm=st.floats(min_value=1.0, max_value=400.0))),
+        time_signature=draw(
+            st.none()
+            | st.builds(
+                TimeSignature,
+                numerator=st.integers(1, 12),
+                denominator=st.sampled_from([2, 4, 8, 16]),
+            )
+        ),
         key=draw(
             st.none()
             | st.builds(Key, tonic=pitch_class, mode=st.sampled_from(Mode), confidence=confidence)
