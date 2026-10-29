@@ -120,14 +120,14 @@ def main(
             from opencapo.analysis.beats import BeatThisTracker
 
             tracker = BeatThisTracker(device=args.device)
+        # Tests that inject stand-ins for the models also inject their own chord
+        # stage (or none); only a real run builds the model-backed committee.
         if (
             chord_stage is None
-            and separator is not None
-            and tracker is not None
-            and (args.chord_experts != "none")
+            and args.chord_experts != "none"
+            and not _fakes_injected(separator, tracker)
         ):
-            if not _fakes_injected(separator, tracker):
-                require_analysis_packages()
+            require_analysis_packages()
             chord_stage = build_chord_stage(args.chord_experts, args.device)
         result = analyze_file(
             args.audio,
