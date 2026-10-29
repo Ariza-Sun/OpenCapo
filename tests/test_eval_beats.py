@@ -1,11 +1,13 @@
 """The evaluation script's loaders and metric glue, without any model."""
 
 import importlib.util
+import shutil
 import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
+from conftest import write_tone
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "eval_beats.py"
 spec = importlib.util.spec_from_file_location("eval_beats", SCRIPT)
@@ -42,12 +44,28 @@ def test_load_tracks_matches_both_layouts(tmp_path: Path) -> None:
     (ann / "gtzan_pop_00001.beats").write_text("", encoding="utf-8")
     (ann / "weird.beats").write_text("1.0\t1\n", encoding="utf-8")
 
-    tracks, problems = eval_beats.load_tracks(audio, ann)
+    tracks, problems = eval_beats.load_tracks(audio, ann, verify_audio=False)
     assert [t.name for t in tracks] == ["blues.00000", "rock.00007"]
     assert tracks[1].audio.suffix == ".au"
     assert any("jazz_00054" in p for p in problems)  # no audio
     assert any("weird.beats" in p for p in problems)  # bad name
     assert any(p == "empty annotation: gtzan_pop_00001.beats" for p in problems)
+
+
+@pytest.mark.skipif(shutil.which("ffprobe") is None, reason="ffmpeg not installed")
+def test_load_tracks_skips_undecodable_audio(tmp_path: Path) -> None:
+    audio = tmp_path / "genres_original"
+    (audio / "jazz").mkdir(parents=True)
+    write_tone(audio / "jazz" / "jazz.00053.wav", seconds=0.2)
+    (audio / "jazz" / "jazz.00054.wav").write_bytes(b"RIFF" + b"\x00" * 64)  # corrupt
+    ann = tmp_path / "beats"
+    ann.mkdir()
+    for name in ("gtzan_jazz_00053.beats", "gtzan_jazz_00054.beats"):
+        (ann / name).write_text("1.0\t1\n2.0\t2\n", encoding="utf-8")
+
+    tracks, problems = eval_beats.load_tracks(audio, ann)
+    assert [t.name for t in tracks] == ["jazz.00053"]
+    assert len(problems) == 1 and problems[0].startswith("undecodable audio jazz.00054.wav")
 
 
 def test_load_tracks_with_nothing(tmp_path: Path) -> None:

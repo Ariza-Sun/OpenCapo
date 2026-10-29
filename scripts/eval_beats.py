@@ -82,8 +82,15 @@ def find_audio(audio_dir: Path) -> dict[tuple[str, str], Path]:
     return found
 
 
-def load_tracks(audio_dir: Path, annotations_dir: Path) -> tuple[list[Track], list[str]]:
-    """Pair annotation files with audio; returns tracks and a list of problems."""
+def load_tracks(
+    audio_dir: Path, annotations_dir: Path, *, verify_audio: bool = True
+) -> tuple[list[Track], list[str]]:
+    """Pair annotation files with audio; returns tracks and a list of problems.
+
+    With `verify_audio`, each file is probed with ffprobe and undecodable ones
+    (GTZAN's jazz.00054 is a known case) are skipped here, so that every system,
+    including the annotations self-check, is scored on the same tracks.
+    """
     audio = find_audio(audio_dir)
     tracks, problems = [], []
     for path in sorted(annotations_dir.glob("*.beats")):
@@ -99,6 +106,15 @@ def load_tracks(audio_dir: Path, annotations_dir: Path) -> tuple[list[Track], li
         if len(beats) == 0:
             problems.append(f"empty annotation: {path.name}")
             continue
+        if verify_audio:
+            from opencapo.analysis.audio import probe
+            from opencapo.errors import InputError
+
+            try:
+                probe(audio[key])
+            except InputError as e:
+                problems.append(f"undecodable audio {audio[key].name}: {e}")
+                continue
         tracks.append(Track(key[0], key[1], audio[key], beats, downbeats))
     if not tracks:
         problems.append("no tracks matched; check --audio and --annotations")
