@@ -1,7 +1,7 @@
 # 第 2 步实现计划：和弦 + 调性
 
 > 对应：`docs/ROADMAP.md` 第 2 步；需求 `docs/REQUIREMENTS.md` 5.2（`Chord`、`Key`）、7（可测试性、许可证）、9（和弦准确率）。
-> 状态：计划草稿。第 8 节决定 1、2 已确认，其余逐个确认中；全部确认后开始实现。
+> 状态：计划草稿。第 8 节决定 1–3 已确认，其余逐个确认中；全部确认后开始实现。
 
 ## 1. 目标与范围
 
@@ -133,9 +133,16 @@ DL 专家进 `analysis` 可选组；crema 依赖 TensorFlow / Keras，与 torch 
 - 已同步修改：`REQUIREMENTS.md` 第 7 节可测试性、第 9 节和弦与调性两条；`ROADMAP.md` 第 2 步；`step-0.md` 第 8 节的"测试集污染"风险标记为已消解。
 - 未采用：只在 GuitarSet 上设门槛、AAM 只报数（可能高估）；只用 AAM（完全没有真实录音）；自建人工标注集（负责人无法提供开放数据以外的数据）。
 
-### 3. 待定：进入对比的 DL 专家
+### 3. 已定：BTC、crema、lv-chordia 三个都进 spike，生产最多留两个
 
-候选：BTC（MIT 代码，权重未声明）、crema（BSD-2，结构化输出，TensorFlow）、lv-chordia（MIT，170 / 600 类，自带低音子任务，torch）。accordoai（本科论文级实验，只用 Beatles 训练，TensorFlow）排除；ChordFormer 无公开代码排除；madmom 和弦（CC-NC、只有大小三和弦）排除。
+- 候选：BTC（PyTorch；代码 MIT，权重随仓库分发、未单独声明；170 类，无低音）、crema（TensorFlow / Keras；BSD-2；结构化输出根音 / 低音 / 音级集合）、lv-chordia（PyTorch ≥ 2.13；MIT；结构化，170 / 600 类词典）。
+- spike 内容：每个专家单独、两两组合 + 规则专家、三个全上，分别在 GuitarSet（调参半 / 报数半）与 AAM 500 首上报 majmin / sevenths / 转位级别准确率与每曲耗时。
+- 取舍规则（先写死）：
+  1. 生产组合从"BTC + 一个结构化模型"里选；结构化模型二选一时同为 torch 的 lv-chordia 优先，除非 crema 在两个评测集的 majmin 上都高出 3 个百分点以上。
+  2. 环境问题（lv-chordia 要求的 torch 版本、crema 的 TensorFlow）可以修，负责人确认服务器环境可调整；升级 torch 时记录新的版本组合到 `docs/benchmarks/README.md`。
+  3. 融合后的数字必须高于最好的单个专家，否则先改融合规则，不硬上。
+- 排除：accordoai（本科论文级实验，只用 Beatles 训练）；ChordFormer（无公开代码）；madmom 和弦（CC-NC、只有大小三和弦）；autochord（只有大小三和弦）。
+- 未采用：只测 torch 系（少一个与低音互校最直接的架构）；只用 BTC（投票失去意义）。
 
 ### 4. 待定：融合参数的调参 / 报数划分
 
