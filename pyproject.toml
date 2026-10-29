@@ -21,6 +21,7 @@ analysis = [
     "beat-this>=1.1",
     "demucs>=4.1",
     "einops",
+    "librosa>=0.10",
     "numpy>=1.26",
     "rotary-embedding-torch",
     "soxr",
@@ -30,6 +31,7 @@ analysis = [
 ]
 dev = [
     "hypothesis>=6.100",
+    "librosa>=0.10",  # the rule-based chord experts are tested on CPU
     "mypy>=1.10",
     "numpy>=1.26",
     "pytest>=8",
@@ -60,7 +62,7 @@ files = ["src"]
 
 [[tool.mypy.overrides]]
 # Model packages ship no type information and are imported lazily.
-module = ["beat_this.*", "demucs.*", "torch", "torch.*"]
+module = ["beat_this.*", "demucs.*", "librosa", "librosa.*", "torch", "torch.*"]
 ignore_missing_imports = true
 follow_untyped_imports = false
 
