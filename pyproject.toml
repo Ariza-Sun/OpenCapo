@@ -18,11 +18,14 @@ dependencies = [
 # Model inference. Kept out of the core package so arranging and rendering
 # install without torch; also needs the ffmpeg command-line tools.
 analysis = [
+    "audioop-lts; python_version >= '3.13'",  # pydub (via lv-chordia) needs the removed stdlib module
     "beat-this>=1.1",
     "demucs>=4.1",
     "einops",
     "librosa>=0.10",
+    "lv-chordia @ git+https://github.com/openmirlab/lv-chordia.git",
     "numpy>=1.26",
+    "scipy>=1.10",
     "rotary-embedding-torch",
     "soxr",
     "torch>=2.1",
@@ -47,6 +50,7 @@ packages = ["src/opencapo"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+extend-exclude = ["src/opencapo/analysis/chords/models/btc_vendor"]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "UP", "SIM", "RUF"]
@@ -62,9 +66,23 @@ files = ["src"]
 
 [[tool.mypy.overrides]]
 # Model packages ship no type information and are imported lazily.
-module = ["beat_this.*", "demucs.*", "librosa", "librosa.*", "torch", "torch.*"]
+module = [
+    "beat_this.*",
+    "demucs.*",
+    "librosa",
+    "librosa.*",
+    "lv_chordia.*",
+    "scipy.*",
+    "torch",
+    "torch.*",
+]
 ignore_missing_imports = true
 follow_untyped_imports = false
+
+[[tool.mypy.overrides]]
+# Third-party model code kept verbatim.
+module = ["opencapo.analysis.chords.models.btc_vendor.*"]
+ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
