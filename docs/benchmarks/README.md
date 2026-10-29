@@ -6,6 +6,8 @@
 |---|---|---|
 | `step-1-beats.md` / `.json` | `scripts/eval_beats.py` | 节拍 F-measure ≥ 85%（GTZAN） |
 | `step-1-timing.md` / `.json` | `scripts/time_pipeline.py` | 4 分钟歌曲分轨 + 节拍 ≤ 90 秒（单张 GPU） |
+| `step-2-chords.md` / `.json` | `scripts/eval_chords.py` | 和弦 majmin ≥ 80%、调性 ≥ 85%（GuitarSet 报数半与 AAM 500 首） |
+| `step-2-timing.md` / `.json` | `scripts/time_pipeline.py --out docs/benchmarks/step-2-timing` | 4 分钟歌曲和弦 + 调性 ≤ 30 秒 |
 
 ## 第 1 步：准备 GTZAN
 
@@ -35,3 +37,21 @@
    ```
 
    先加 `--limit 5` 做一次干跑确认目录对了。两个脚本都把结果写到本目录，提交即可。
+
+## 第 2 步：准备 GuitarSet 与 AAM
+
+两个数据集都在 Zenodo，用它的 API 列文件再下载（`curl -s https://zenodo.org/api/records/<id>` 的 `files` 字段）。
+
+1. **GuitarSet**（Zenodo record 3371780；360 段约 30 秒的原声吉他录音，谱面 / 实奏和弦、调性、拍点）：下载 `annotation.zip` 与 `audio_mono-mic.zip`，解压到 `/data/guitarset/`，得到 `annotation/*.jams` 与 `audio_mono-mic/*_mic.wav`。脚本默认用谱面和弦（lead sheet）与麦克风录音；吉他手 00–02 调参、03–05 报数。
+2. **AAM**（Zenodo record 5794629，CC BY 4.0；3000 首合成多轨）：下载标注包 `0001-1000-annotations-v1.1.0.zip` 和覆盖前 500 首混音的音频包，解压到 `/data/aam/`。脚本按编号取前 500 首，按文件名里的 `chord` / `key` / `beat` 关键词找 ARFF 标注、按 `mix` 找音频。
+3. 运行：
+
+   ```bash
+   pip install -e ".[analysis]" -r scripts/requirements-eval.txt
+   python scripts/eval_chords.py --guitarset /data/guitarset --aam /data/aam --inspect      # 先核对格式
+   python scripts/eval_chords.py --guitarset /data/guitarset --aam /data/aam --limit 3 --no-tune --out /tmp/dryrun
+   python scripts/eval_chords.py --guitarset /data/guitarset --aam /data/aam --device cuda --cache /data/eval-cache
+   python scripts/time_pipeline.py /data/song-4min.mp3 --device cuda --out docs/benchmarks/step-2-timing
+   ```
+
+   `--cache` 把各专家的逐拍输出存下来，调参和复跑不用重算模型。

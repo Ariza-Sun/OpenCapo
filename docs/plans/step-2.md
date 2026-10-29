@@ -43,7 +43,7 @@ bass 分轨 ───────── E4  低音音高检测（规则）      
 | 专家 | 类型 | 输入 | 产出 | 作用 |
 |---|---|---|---|---|
 | E1 BTC（Park 等，ISMIR 2019） | DL，170 类：14 性质 × 12 根音 + N + X | 混音 | 逐帧后验 | 性质词表与我们的枚举几乎一致（它有 minmaj7，没有 `5`）；大词表主力 |
-| E2 crema（McFee & Bello，ISMIR 2017）或 lv-chordia（Jiang 等，ISMIR 2019 的 pip 封装） | DL，结构化输出：根音 / 低音 / 音级集合 | 混音 | 逐帧后验 + 低音 | 架构与 E1 不同、错法不同，投票才有价值；自带低音估计，与 E4 互校 |
+| E2 lv-chordia（Jiang 等，ISMIR 2019 的 pip 封装；crema 因环境淘汰，见决定 3） | DL，五网络集成，结构化输出：根音 / 三和弦、低音、七音、扩展音 | 混音 | 逐帧后验（经其解码器按我们的 14 种性质组合） | 架构与 E1 不同、错法不同，投票才有价值；词表缺 `5`，由 E3 补 |
 | E3 色度模板 | 规则：CQT 色度 → 14 × 12 个和弦模板的余弦打分；自己实现（不用 GPL 的 Chordino） | 去鼓混音（bass + other + vocals） | 逐帧打分 | 不依赖任何训练集；弱但独立；也是 `5`（强力和弦）唯一的来源 |
 | E4 低音检测 | 规则：bass 分轨上做基频跟踪（pYIN 或低频 CQT 峰值），按拍投票 | bass 分轨 | 每拍低音音级 + 强度 | 人类"先听贝斯"；转位只能从这里来 |
 | E5 调性 | 规则：Krumhansl–Schmuckler 模板在整曲色度上打分；再用和弦序列（按时长加权的根音 / 性质直方图）独立估一次；两者互校 | 混音；E1–E3 的输出 | 调 + 置信度 | 不用 AGPL 的 essentia、CC-NC 的 madmom；不一致时降置信度 |
@@ -142,6 +142,7 @@ DL 专家进 `analysis` 可选组；crema 依赖 TensorFlow / Keras，与 torch 
   2. 环境问题（lv-chordia 要求的 torch 版本、crema 的 TensorFlow）可以修，负责人确认服务器环境可调整；升级 torch 时记录新的版本组合到 `docs/benchmarks/README.md`。
   3. 融合后的数字必须高于最好的单个专家，否则先改融合规则，不硬上。
 - 排除：accordoai（本科论文级实验，只用 Beatles 训练）；ChordFormer（无公开代码）；madmom 和弦（CC-NC、只有大小三和弦）；autochord（只有大小三和弦）。
+- **实施中的结果**：crema 按规则 2 淘汰——它调用 Keras 2 的 `model_from_config`，Keras 3 没有；Keras 2 需要 TensorFlow ≤ 2.15 与 Python ≤ 3.11，与 node28 的 3.12 和本仓库环境都不兼容，等于单独建一套环境，只尝试一次（降级 setuptools）后停止。BTC 与 lv-chordia 在合成的 C–F–G7–Am 上都正确，进入 spike。
 - 未采用：只测 torch 系（少一个与低音互校最直接的架构）；只用 BTC（投票失去意义）。
 
 ### 4. 已定：GuitarSet 按吉他手分半调参，AAM 只报数
@@ -165,7 +166,7 @@ DL 专家进 `analysis` 可选组；crema 依赖 TensorFlow / Keras，与 torch 
 | 评测集与产品输入不像 | GuitarSet 是单吉他；AAM 是合成 | 两者都报；真歌效果靠负责人试听，记为风险 |
 | DL 专家的训练集偏西方流行 / 摇滚 | 中文流行歌和声语汇相近，但编曲风格不同 | 规则专家不受影响；第 5 步接中文歌时回看 |
 | `5` 无模型支持 | 只靠色度规则 | 先占位，看评测 |
-| crema 带 TensorFlow | 安装体积与 torch 并存 | 实测后决定去留 |
+| lv-chordia 只在 GitHub 发布 | `analysis` 依赖组用直接引用安装；pydub 在 Python 3.13 上需要 `audioop-lts` | 已处理；若上游消失，权重可改为固定 commit 下载 |
 
 ## 10. 交付顺序
 
