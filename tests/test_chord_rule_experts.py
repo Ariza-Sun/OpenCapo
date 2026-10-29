@@ -176,6 +176,21 @@ def test_relative_major_minor_settled_by_tonic_chord_duration() -> None:
     mostly_c = [chord(0, 3, 0, ChordQuality.MAJ), chord(3, 4, 9, ChordQuality.MIN)]
     key = estimate_key(tie, np.zeros(24), mostly_c)
     assert key is not None and (key.tonic, key.mode) == (0, Mode.MAJOR)
+    assert key.confidence == pytest.approx(min(1.0, 6.0 * 0.5))  # 3 s vs 1 s -> lopsidedness 0.5
+
+
+def test_settled_relative_tie_never_yields_negative_confidence() -> None:
+    # The minor key scores a hair higher, but the chords favour the major: the
+    # tie-break puts the major first, so the raw score margin would be negative.
+    scores = np.zeros(24)
+    scores[key_index(9, Mode.MINOR)] = 1.0
+    scores[key_index(0, Mode.MAJOR)] = 1.0 - 1e-4
+    chords = [chord(0, 3, 0, ChordQuality.MAJ), chord(3, 4, 9, ChordQuality.MIN)]
+    key = estimate_key(scores, np.zeros(24), chords)
+    assert key is not None and (key.tonic, key.mode) == (0, Mode.MAJOR)
+    assert 0.0 <= key.confidence <= 1.0
+    key = estimate_key(scores, np.zeros(24), [])  # nothing to settle with: stays non-negative
+    assert key is not None and key.confidence >= 0.0
 
 
 @pytest.mark.parametrize("tonic", [0, 4, 7])

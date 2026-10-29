@@ -48,7 +48,7 @@ opencapo analyze click.wav --out analysis.json --timing -
 pytest -m models   # 真模型的端到端测试（CPU 也能跑，首次会下载权重）
 ```
 
-模型权重首次运行时自动下载，各自的许可证见 [docs/plans/backend.md](docs/plans/backend.md) 第 2.1 节；Demucs 的权重许可证未声明，按非商业对待。
+模型权重首次运行时自动下载，各自的许可证见 [docs/plans/backend.md](docs/plans/backend.md) 第 2.1 节；Demucs 的权重许可证未声明，按非商业对待。lv-chordia 声明要 `torch>=2.13`，在驱动较旧、只能装旧 torch 的机器上会被 pip 顶掉 torch，处理办法见 [docs/benchmarks/README.md](docs/benchmarks/README.md) 的 torch 提醒。
 
 ## 许可证
 

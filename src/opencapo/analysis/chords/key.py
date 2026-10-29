@@ -108,9 +108,14 @@ def estimate_key(
         combined += _normalise(chord_scores)
     order = np.argsort(combined)[::-1]
     best, second = int(order[0]), int(order[1])
+    settled = 0.0
     if _relative_pair(best, second) and abs(combined[best] - combined[second]) < 1e-3:
-        best, second = _settle_relative(best, second, chords)
-    margin = (combined[best] - combined[second]) / max(combined[best], 1e-9)
+        # The tie-break may rank the marginally lower-scoring key first, so the
+        # score margin is clamped at zero and the tie-break's own decisiveness
+        # (how lopsided the I vs vi chord time is) stands in for it.
+        best, second, settled = _settle_relative(best, second, chords)
+    margin = max(0.0, (combined[best] - combined[second]) / max(combined[best], 1e-9))
+    margin = max(margin, settled)
     confidence = float(min(1.0, 6.0 * margin))  # a 1/6 relative margin is already clear
     if has_chroma and has_chords and int(np.argmax(chroma_scores)) != int(np.argmax(chord_scores)):
         confidence /= 2.0
@@ -127,7 +132,8 @@ def _relative_pair(a: int, b: int) -> bool:
     return (major + 9) % 12 == minor
 
 
-def _settle_relative(a: int, b: int, chords: Sequence[Chord]) -> tuple[int, int]:
+def _settle_relative(a: int, b: int, chords: Sequence[Chord]) -> tuple[int, int, float]:
+    """Order a relative major/minor pair by tonic-chord time; also say how lopsided it was (0-1)."""
     ta, ma = key_from_index(a)
     tb, _ = key_from_index(b)
     major_tonic = ta if ma == Mode.MAJOR else tb
@@ -140,4 +146,8 @@ def _settle_relative(a: int, b: int, chords: Sequence[Chord]) -> tuple[int, int]
     )
     major_index = key_index(major_tonic, Mode.MAJOR)
     minor_index = key_index(minor_tonic, Mode.MINOR)
-    return (minor_index, major_index) if minor_time > major_time else (major_index, minor_index)
+    total = major_time + minor_time
+    strength = abs(major_time - minor_time) / total if total > 0 else 0.0
+    if minor_time > major_time:
+        return minor_index, major_index, strength
+    return major_index, minor_index, strength

@@ -92,37 +92,71 @@ def test_jams_dict_of_lists_form() -> None:
     assert obs[1] == {"time": 1.0, "duration": 1.0, "value": "N", "confidence": None}
 
 
-def test_arff_reader_and_aam_loader(tmp_path: Path) -> None:
+AAM_BEATINFO = (
+    "@RELATION 'Beat information of 0001'\n"
+    "@ATTRIBUTE 'Start time in seconds' NUMERIC\n@ATTRIBUTE 'Bar count' NUMERIC\n"
+    "@ATTRIBUTE 'Quarter count' NUMERIC\n@ATTRIBUTE 'Chord name' STRING\n@DATA\n"
+    "0.0,1,1,'Fmaj'\n0.5,1,2,'Fmaj'\n2.0,2,1,'A#maj'\n4.0,3,1,'Amin'\n5.0,3,3,'Dmin'\n8.0,5,1,'Cmaj'\n"
+)
+AAM_SEGMENTS = (
+    "@RELATION 'Segment information of 0001'\n"
+    "@ATTRIBUTE 'Start time in seconds' NUMERIC\n@ATTRIBUTE 'Mark' STRING\n"
+    "@ATTRIBUTE 'Tempo' NUMERIC\n@ATTRIBUTE 'Key' STRING\n@ATTRIBUTE 'Instruments' STRING\n"
+    "@ATTRIBUTE 'Generator' STRING\n@DATA\n"
+    "0.0,'A',120,'Fmaj','[TenorSax,Ukulele]','[MelodyBow,ChordArpeggios]'\n"
+    "6.0,'B',120,'Gmin','[Flugelhorn,Drums]','[MelodyBow,BassLine]'\n"
+    "10.0,'end',0,'','[]','[]'\n"
+)
+
+
+def write_aam(root: Path, track_id: str, audio_name: str | None, annotations: bool = True) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    if annotations:
+        beatinfo = AAM_BEATINFO.replace("0001", track_id)
+        (root / f"{track_id}_beatinfo.arff").write_text(beatinfo, encoding="utf-8")
+        segments = AAM_SEGMENTS.replace("0001", track_id)
+        (root / f"{track_id}_segments.arff").write_text(segments, encoding="utf-8")
+    (root / f"{track_id}_onsets.arff").write_text(
+        "@RELATION onsets\n@ATTRIBUTE 'Onset time in seconds' NUMERIC\n@DATA\n0.0\n",
+        encoding="utf-8",
+    )
+    if audio_name:
+        write_tone(root / audio_name, seconds=0.2)
+
+
+def test_aam_loader_reads_the_v110_layout(tmp_path: Path) -> None:
     root = tmp_path / "aam"
-    (root / "0001").mkdir(parents=True)
-    (root / "0001" / "0001_chords.arff").write_text(
-        "@RELATION chords\n@ATTRIBUTE 'Onset in seconds' NUMERIC\n"
-        "@ATTRIBUTE 'Offset in seconds' NUMERIC\n@ATTRIBUTE Chord STRING\n"
-        "@DATA\n0.0,2.0,'C:maj'\n2.0,4.0,Am\n4.0,6.0,'G7'\n",
-        encoding="utf-8",
-    )
-    (root / "0001" / "0001_key.arff").write_text(
-        "@RELATION key\n@ATTRIBUTE 'Key' STRING\n@DATA\n'A minor'\n", encoding="utf-8"
-    )
-    (root / "0001" / "0001_beats.arff").write_text(
-        "@RELATION beats\n@ATTRIBUTE 'Onset in seconds' NUMERIC\n"
-        "@ATTRIBUTE 'Beat position' NUMERIC\n@DATA\n0.0,1\n0.5,2\n1.0,3\n1.5,4\n2.0,1\n",
-        encoding="utf-8",
-    )
-    write_tone(root / "0001" / "0001_mix.wav", seconds=0.2)
-    (root / "0002").mkdir()
-    (root / "0002" / "0002_chords.arff").write_text(
-        "@RELATION c\n@ATTRIBUTE Onset NUMERIC\n@ATTRIBUTE Chord STRING\n@DATA\n0.0,C\n",
-        encoding="utf-8",
-    )
+    write_aam(root / "annotations", "0001", None)
+    (root / "mixes").mkdir()
+    write_tone(root / "mixes" / "0001_mix.wav", seconds=0.2)
+    write_aam(root / "annotations", "0002", None, annotations=False)  # onsets only
+    write_aam(root / "annotations", "0003", None)  # no audio
+    write_aam(root / "annotations", "0004", "0004.wav")  # audio without "mix" in the name
     tracks = eval_chords.aam_tracks(root, count=500)
-    assert [t.name for t in tracks] == ["0001"]  # 0002 has no audio and is skipped
+    assert [t.name for t in tracks] == ["0001", "0004"]
     t = tracks[0]
-    assert t.chord_labels == ["C:maj", "A:min", "G:7"]
-    np.testing.assert_allclose(t.chord_intervals, [[0, 2], [2, 4], [4, 6]])
-    assert t.key == (9, "minor")
-    assert t.beats.tolist() == [0.0, 0.5, 1.0, 1.5, 2.0] and t.downbeats.tolist() == [0.0, 2.0]
+    assert t.audio == root / "mixes" / "0001_mix.wav"
+    assert t.chord_labels == ["F:maj", "A#:maj", "A:min", "D:min", "C:maj"]
+    np.testing.assert_allclose(t.chord_intervals, [[0, 2], [2, 4], [4, 5], [5, 8], [8, 10]])
+    assert t.key == (5, "major")  # F major lasts 6 s, G minor 4 s
+    np.testing.assert_allclose(t.beats, np.arange(0, 10, 0.5))
+    np.testing.assert_allclose(t.downbeats, [0, 2, 4, 6, 8])
+    assert eval_chords.aam_tracks(root, count=1)[0].name == "0001"
     assert eval_chords.aam_tracks(root, count=0) == []
+
+
+def test_aam_meter_and_key_fallbacks() -> None:
+    anchors = [(0.0, 1, 1, "C"), (1.5, 2, 1, "F"), (3.0, 3, 1, "G"), (4.0, 3, 3, "C")]
+    sections = [(0.0, 120.0, "Cmaj")]
+    assert eval_chords.aam_beats_per_bar(anchors, sections) == 3
+    assert eval_chords.aam_beats_per_bar([(0.0, 1, 1, "C"), (1.0, 1, 2, "F")], sections) == 2
+    beats, downbeats = eval_chords.aam_beat_grid(sections, 4.5, anchors)
+    np.testing.assert_allclose(beats, np.arange(0, 4.5, 0.5))
+    np.testing.assert_allclose(downbeats, [0, 1.5, 3.0])
+    assert eval_chords.aam_key([(0.0, 120.0, ""), (2.0, 120.0, "Amin")], 4.0) == (9, "minor")
+    assert eval_chords.aam_key([(0.0, 120.0, "")], 4.0) is None
+    intervals, labels = eval_chords.aam_chord_segments([(0.0, 1, 1, "N"), (2.0, 2, 1, "G7")], 2.0)
+    assert labels == ["N"] and intervals.tolist() == [[0.0, 2.0]]
 
 
 @pytest.mark.parametrize(

@@ -176,83 +176,165 @@ def _find_column(attributes: Sequence[str], *needles: str) -> int:
 
 
 def aam_tracks(root: Path, count: int) -> list[Track]:
-    """AAM from its Zenodo layout: per-track ARFF annotations + mixed audio.
+    """AAM v1.1.0 from its Zenodo layout (annotations zip + audio-mixes zip).
 
-    Tracks are the first `count` ids in sorted order (deterministic). The
-    annotation files are matched by id and by keyword (chord / key / beat).
+    Each track id has `<id>_beatinfo.arff` (one row per chord onset: start
+    time, bar count, quarter count, chord name; not every beat is listed),
+    `<id>_segments.arff` (one row per section: start, mark, tempo, key, ...,
+    closed by an `end` row) and `<id>_onsets.arff` (unused). Chords are the
+    beatinfo rows with repeats merged; the key is the section key that lasts
+    longest; the beat grid is synthesised from the section tempi and
+    anchored on the bar / quarter counts. Tracks are the first `count` ids in
+    sorted order. Audio is any file under root whose name starts with the
+    id, preferring one with "mix" in its name.
     """
-    arffs = sorted(root.rglob("*.arff"))
-    by_id: dict[str, dict[str, Path]] = {}
-    for path in arffs:
+    annotations: dict[str, dict[str, Path]] = {}
+    for path in sorted(root.rglob("*.arff")):
+        match = re.match(r"^(\d{4})_(beatinfo|segments)\.arff$", path.name, re.IGNORECASE)
+        if match:
+            annotations.setdefault(match.group(1), {})[match.group(2).lower()] = path
+    audio_by_id: dict[str, Path] = {}
+    candidates = [p for p in root.rglob("*") if p.suffix.lower() in AUDIO_SUFFIXES]
+    for path in sorted(candidates, key=lambda p: ("mix" not in p.stem.lower(), p.name)):
         match = re.match(r"^(\d{4})", path.name)
-        if not match:
-            continue
-        kind = path.stem.lower()
-        bucket = by_id.setdefault(match.group(1), {})
-        for keyword in ("chord", "key", "beat"):
-            if keyword in kind and keyword not in bucket:
-                bucket[keyword] = path
-    audio_files = {
-        p.name: p
-        for p in root.rglob("*")
-        if p.suffix.lower() in AUDIO_SUFFIXES and "mix" in p.stem.lower()
-    }
+        if match:
+            audio_by_id.setdefault(match.group(1), path)
     tracks = []
-    for track_id in sorted(by_id)[:count]:
-        files = by_id[track_id]
-        audio = next(
-            (p for name, p in sorted(audio_files.items()) if name.startswith(track_id)), None
-        )
-        if audio is None or "chord" not in files:
-            print(f"skip: AAM {track_id} missing audio or chords", file=sys.stderr)
+    for track_id in sorted(annotations)[:count]:
+        files = annotations[track_id]
+        audio = audio_by_id.get(track_id)
+        if audio is None or "beatinfo" not in files or "segments" not in files:
+            print(f"skip: AAM {track_id} missing audio or annotations", file=sys.stderr)
             continue
-        attrs, rows = read_arff(files["chord"])
-        t_col = _find_column(attrs, "onset", "start", "time")
-        label_col = _find_column(attrs, "chord", "label")
-        end_col = None
-        for i, name in enumerate(attrs):
-            if any(n in name.lower() for n in ("offset", "end")):
-                end_col = i
-        starts = [float(r[t_col]) for r in rows]
-        labels = [normalize_aam_label(r[label_col]) for r in rows]
-        if end_col is not None:
-            ends = [float(r[end_col]) for r in rows]
-        else:
-            ends = [*starts[1:], starts[-1] + 1.0 if starts else 0.0]
-        intervals = np.array(list(zip(starts, ends, strict=True)), dtype=float)
-        key = None
-        if "key" in files:
-            kattrs, krows = read_arff(files["key"])
-            if krows:
-                kcol = _find_column(kattrs, "key", "tonic", "label")
-                key = parse_key(krows[0][kcol])
-        beats, downbeats = np.zeros(0), np.zeros(0)
-        if "beat" in files:
-            battrs, brows = read_arff(files["beat"])
-            bcol = _find_column(battrs, "onset", "time", "start")
-            beats = np.array([float(r[bcol]) for r in brows])
-            try:
-                pcol = _find_column(battrs, "position", "beat")
-                downbeats = np.array(
-                    [float(r[bcol]) for r in brows if r[pcol].strip() in ("1", "1.0")]
-                )
-            except KeyError:
-                pass
-        tracks.append(
-            Track(
-                dataset="aam",
-                split="report",
-                name=track_id,
-                group="aam",
-                audio=audio,
-                chord_intervals=intervals,
-                chord_labels=labels,
-                key=key,
-                beats=beats,
-                downbeats=downbeats,
-            )
-        )
+        try:
+            tracks.append(aam_track(track_id, audio, files["beatinfo"], files["segments"]))
+        except (KeyError, ValueError, IndexError) as e:
+            print(f"skip: AAM {track_id} unreadable annotations ({e})", file=sys.stderr)
     return tracks
+
+
+def read_aam_beatinfo(path: Path) -> list[tuple[float, int, int, str]]:
+    """(start, bar, quarter, chord name) per chord-onset row."""
+    attrs, rows = read_arff(path)
+    t_col = _find_column(attrs, "start", "time")
+    bar_col = _find_column(attrs, "bar")
+    quarter_col = _find_column(attrs, "quarter")
+    chord_col = _find_column(attrs, "chord")
+    return [
+        (float(r[t_col]), int(float(r[bar_col])), int(float(r[quarter_col])), r[chord_col])
+        for r in rows
+    ]
+
+
+def read_aam_segments(path: Path) -> tuple[list[tuple[float, float, str]], float | None]:
+    """(start, tempo, key) per section with tempo > 0, and the `end` row's time."""
+    attrs, rows = read_arff(path)
+    t_col = _find_column(attrs, "start", "time")
+    tempo_col = _find_column(attrs, "tempo")
+    key_col = _find_column(attrs, "key")
+    sections, end = [], None
+    for r in rows:
+        start, tempo = float(r[t_col]), float(r[tempo_col])
+        if tempo > 0:
+            sections.append((start, tempo, r[key_col]))
+        else:
+            end = start
+    return sections, end
+
+
+def aam_track(track_id: str, audio: Path, beatinfo: Path, segments: Path) -> Track:
+    anchors = read_aam_beatinfo(beatinfo)
+    sections, end = read_aam_segments(segments)
+    if not anchors or not sections:
+        raise ValueError("no chord rows or sections")
+    if end is None:
+        end = anchors[-1][0] + 60.0 / sections[-1][1]
+    intervals, labels = aam_chord_segments(anchors, end)
+    beats, downbeats = aam_beat_grid(sections, end, anchors)
+    return Track(
+        dataset="aam",
+        split="report",
+        name=track_id,
+        group="aam",
+        audio=audio,
+        chord_intervals=intervals,
+        chord_labels=labels,
+        key=aam_key(sections, end),
+        beats=beats,
+        downbeats=downbeats,
+    )
+
+
+def aam_chord_segments(
+    anchors: Sequence[tuple[float, int, int, str]], end: float
+) -> tuple[np.ndarray, list[str]]:
+    """Merge consecutive rows with the same label; each segment ends where the next starts."""
+    merged: list[tuple[float, str]] = []
+    for start, _, _, name in anchors:
+        label = normalize_aam_label(name)
+        if not merged or merged[-1][1] != label:
+            merged.append((start, label))
+    starts = [m[0] for m in merged]
+    ends = [*starts[1:], max(end, starts[-1])]
+    keep = [i for i, (s, e) in enumerate(zip(starts, ends, strict=True)) if e > s]
+    intervals = np.array([[starts[i], ends[i]] for i in keep], dtype=float).reshape(-1, 2)
+    return intervals, [merged[i][1] for i in keep]
+
+
+def aam_key(sections: Sequence[tuple[float, float, str]], end: float) -> tuple[int, str] | None:
+    """The key that covers the most time (AAM pieces may modulate between sections)."""
+    time_by_key: dict[str, float] = {}
+    bounds = [*(s[0] for s in sections[1:]), end]
+    for (start, _, key), next_start in zip(sections, bounds, strict=True):
+        if key.strip():
+            time_by_key[key] = time_by_key.get(key, 0.0) + max(0.0, next_start - start)
+    if not time_by_key:
+        return None
+    return parse_key(max(time_by_key, key=lambda k: time_by_key[k]))
+
+
+def aam_beat_grid(
+    sections: Sequence[tuple[float, float, str]],
+    end: float,
+    anchors: Sequence[tuple[float, int, int, str]],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Beats at each section's tempo; downbeats phased by the bar / quarter anchors."""
+    beats_per_bar = aam_beats_per_bar(anchors, sections)
+    beats: list[float] = []
+    downbeats: list[float] = []
+    bounds = [*(s[0] for s in sections[1:]), end]
+    for (start, tempo, _), next_start in zip(sections, bounds, strict=True):
+        period = 60.0 / tempo
+        count = max(0, round((next_start - start) / period))
+        phase = 0
+        for t, _, quarter, _ in anchors:
+            if start - 1e-6 <= t < next_start:
+                phase = (round((t - start) / period) - (quarter - 1)) % beats_per_bar
+                break
+        for k in range(count):
+            t = start + k * period
+            beats.append(t)
+            if (k - phase) % beats_per_bar == 0:
+                downbeats.append(t)
+    return np.array(beats, dtype=float), np.array(downbeats, dtype=float)
+
+
+def aam_beats_per_bar(
+    anchors: Sequence[tuple[float, int, int, str]], sections: Sequence[tuple[float, float, str]]
+) -> int:
+    """Infer the meter from pairs of anchors in different bars (fallback: the largest quarter)."""
+    votes: dict[int, int] = {}
+    for (t1, b1, q1, _), (t2, b2, q2, _) in itertools.pairwise(anchors):
+        if b2 <= b1:
+            continue
+        tempo = next((s[1] for s in reversed(sections) if s[0] <= t1 + 1e-6), sections[0][1])
+        n = (t2 - t1) * tempo / 60.0
+        estimate = (n - (q2 - q1)) / (b2 - b1)
+        if abs(estimate - round(estimate)) < 0.1 and 1 <= round(estimate) <= 12:
+            votes[round(estimate)] = votes.get(round(estimate), 0) + 1
+    if votes:
+        return max(votes, key=lambda k: (votes[k], -k))
+    return max((a[2] for a in anchors), default=4) or 4
 
 
 PITCH = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
@@ -289,7 +371,7 @@ def normalize_aam_label(text: str) -> str:
     table = {"": "maj", "maj": "maj", "M": "maj", "m": "min", "min": "min", "dim": "dim",
              "aug": "aug", "7": "7", "maj7": "maj7", "M7": "maj7", "m7": "min7", "min7": "min7",
              "sus2": "sus2", "sus4": "sus4", "dim7": "dim7", "hdim7": "hdim7", "m7b5": "hdim7",
-             "6": "maj6", "m6": "min6", "5": "5"}  # fmt: skip
+             "6": "maj6", "m6": "min6", "5": "5", "dom7": "7", "min7b5": "hdim7"}  # fmt: skip
     return f"{root}:{table.get(rest, rest)}"
 
 

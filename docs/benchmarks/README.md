@@ -43,11 +43,11 @@
 两个数据集都在 Zenodo，用它的 API 列文件再下载（`curl -s https://zenodo.org/api/records/<id>` 的 `files` 字段）。
 
 1. **GuitarSet**（Zenodo record 3371780；360 段约 30 秒的原声吉他录音，谱面 / 实奏和弦、调性、拍点）：下载 `annotation.zip` 与 `audio_mono-mic.zip`，解压到 `/data/guitarset/`，得到 `annotation/*.jams` 与 `audio_mono-mic/*_mic.wav`。脚本默认用谱面和弦（lead sheet）与麦克风录音；吉他手 00–02 调参、03–05 报数。
-2. **AAM**（Zenodo record 5794629，CC BY 4.0；3000 首合成多轨）：下载标注包 `0001-1000-annotations-v1.1.0.zip` 和覆盖前 500 首混音的音频包，解压到 `/data/aam/`。脚本按编号取前 500 首，按文件名里的 `chord` / `key` / `beat` 关键词找 ARFF 标注、按 `mix` 找音频。
+2. **AAM**（Zenodo record 5794629，CC BY 4.0；3000 首合成多轨）：下载标注包 `0001-1000-annotations-v1.1.0.zip`（8 MB）和混音包 `0001-1000-audio-mixes.zip`（14.7 GB；混音按 1000 首一包切，没有更小的单位，所以前 500 首也得下整包），解压到 `/data/aam/`。每首只有三个 ARFF：`<id>_beatinfo.arff`（每个和弦起点一行：起始秒、小节数、拍数、`Chord name`，**不是**每拍一行）、`<id>_segments.arff`（每段一行：起始秒、段落标记、`Tempo`、`Key`，最后一行 `end`）、`<id>_onsets.arff`（不用）。脚本按编号取前 500 首；和弦取 beatinfo 的行并合并相邻同名；调性取各段里累计时长最长的 `Key`（有的曲子中途转调）；拍网格按各段速度合成、用小节 / 拍数定强拍；音频是 `/data/aam/` 下任何以编号开头的音频文件（名字含 `mix` 者优先）。
 3. 运行：
 
    ```bash
-   pip install -e ".[analysis]" -r scripts/requirements-eval.txt
+   pip install -e ".[analysis]" -r scripts/requirements-eval.txt     # 见下面关于 torch 的提醒
    python scripts/eval_chords.py --guitarset /data/guitarset --aam /data/aam --inspect      # 先核对格式
    python scripts/eval_chords.py --guitarset /data/guitarset --aam /data/aam --limit 3 --no-tune --out /tmp/dryrun
    python scripts/eval_chords.py --guitarset /data/guitarset --aam /data/aam --device cuda --cache /data/eval-cache
@@ -55,3 +55,14 @@
    ```
 
    `--cache` 把各专家的逐拍输出存下来，调参和复跑不用重算模型。
+
+   **torch 提醒**：lv-chordia 的依赖声明是 `torch>=2.13`，在只能用旧 CUDA 驱动（因而只能装旧 torch）的机器上，`pip install -e ".[analysis]"` 会把 torch 换成不匹配驱动的新版本。先装好与驱动匹配的 torch / torchaudio，再用约束文件钉住它们、lv-chordia 用 `--no-deps` 装并手动补其纯 Python 依赖：
+
+   ```bash
+   printf 'torch==%s\ntorchaudio==%s\n' "$(pip show torch | awk '/^Version/{print $2}')" "$(pip show torchaudio | awk '/^Version/{print $2}')" > /tmp/torch-pin.txt
+   pip install -c /tmp/torch-pin.txt -e ".[analysis]" -r scripts/requirements-eval.txt   # 若在这里报 torch 冲突，改走下面两行
+   pip install -c /tmp/torch-pin.txt --no-deps "lv-chordia @ git+https://github.com/openmirlab/lv-chordia.git"
+   pip install -c /tmp/torch-pin.txt "librosa>=0.10" "pretty-midi>=0.2.9" "pydub>=0.23.1"
+   ```
+
+   pip 会打印一行 `lv-chordia requires torch>=2.13` 的警告，可忽略：实测 torch 2.5.1 能跑它的五个网络（`pytest -m models tests/test_chord_models.py`）。
