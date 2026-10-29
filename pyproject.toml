@@ -47,6 +47,10 @@ opencapo = "opencapo.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/opencapo"]
 
+[tool.hatch.metadata]
+# lv-chordia is only published on GitHub, so the analysis extra points at it directly.
+allow-direct-references = true
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

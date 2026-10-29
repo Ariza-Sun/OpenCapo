@@ -1,0 +1,798 @@
+"""Chord and key accuracy of the expert committee on GuitarSet and AAM (step-2 acceptance).
+
+Usage:
+    python scripts/eval_chords.py --guitarset DIR --aam DIR [--aam-count 500] \
+        [--experts btc,lvchordia,chroma] [--device auto] [--limit N] [--no-tune] \
+        [--no-stems] [--cache DIR] [--out docs/benchmarks/step-2-chords]
+    python scripts/eval_chords.py --guitarset DIR --aam DIR --inspect   # show file formats and exit
+
+Needs `pip install -e ".[analysis]" -r scripts/requirements-eval.txt` and the
+datasets laid out as described in docs/benchmarks/README.md. Writes OUT.json
+(every number) and OUT.md (the summary tables).
+
+Protocol (docs/plans/step-2.md, decisions 2-4):
+- the beat grid comes from the datasets' own beat annotations, so chord
+  numbers are not confounded by beat-tracking errors;
+- stems come from Demucs (for the bass line) unless --no-stems;
+- every expert alone, the committee with default parameters, and the
+  committee with parameters tuned on GuitarSet players 00-02 are scored;
+  GuitarSet players 03-05 and AAM are the report sets;
+- chord metrics are mir_eval's majmin / sevenths / majmin_inv /
+  sevenths_inv / root (duration-weighted); the key metric is exact
+  tonic+mode accuracy plus mir_eval's weighted key score.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import importlib.metadata
+import itertools
+import json
+import pickle
+import platform
+import re
+import sys
+import time
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import numpy as np
+
+ACCEPTANCE_MAJMIN = 0.80
+ACCEPTANCE_KEY = 0.85
+TUNE_PLAYERS = ("00", "01", "02")
+CHORD_METRICS = ("majmin", "sevenths", "majmin_inv", "sevenths_inv", "root")
+AUDIO_SUFFIXES = (".wav", ".flac", ".mp3", ".ogg")
+
+
+# --- data ----------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Track:
+    dataset: str  # "guitarset" | "aam"
+    split: str  # "tune" | "report"
+    name: str
+    group: str  # GuitarSet style or AAM genre-ish bucket, for the breakdown
+    audio: Path
+    chord_intervals: np.ndarray  # (n, 2) seconds
+    chord_labels: list[str]  # Harte
+    key: tuple[int, str] | None  # (tonic pitch class, "major" | "minor")
+    beats: np.ndarray  # seconds
+    downbeats: np.ndarray  # seconds
+
+
+def read_jams(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def jams_observations(annotation: dict) -> list[dict]:
+    """JAMS stores observations as a list of dicts (0.3) or a dict of lists (0.2)."""
+    data = annotation["data"]
+    if isinstance(data, dict):
+        keys = list(data)
+        return [dict(zip(keys, values, strict=True)) for values in zip(*data.values(), strict=True)]
+    return list(data)
+
+
+def guitarset_tracks(root: Path, *, chords: str = "instructed", audio: str = "mic") -> list[Track]:
+    """GuitarSet from its Zenodo layout: annotation/*.jams + audio_mono-{mic,pickup_mix}/."""
+    jams_files = sorted(root.rglob("*.jams"))
+    tracks = []
+    for jams_path in jams_files:
+        jam = read_jams(jams_path)
+        by_ns: dict[str, list[dict]] = {}
+        for ann in jam["annotations"]:
+            by_ns.setdefault(ann["namespace"], []).append(ann)
+        chord_anns = by_ns.get("chord", [])
+        if not chord_anns:
+            continue
+        # The first chord annotation is the lead sheet ("instructed"), the
+        # second the performed chords inferred from the notes.
+        ann = chord_anns[0 if chords == "instructed" else min(1, len(chord_anns) - 1)]
+        obs = jams_observations(ann)
+        intervals = np.array([[o["time"], o["time"] + o["duration"]] for o in obs], dtype=float)
+        labels = [str(o["value"]) for o in obs]
+        key = None
+        if by_ns.get("key_mode"):
+            key = parse_key(str(jams_observations(by_ns["key_mode"][0])[0]["value"]))
+        beats, downbeats = [], []
+        for o in jams_observations(by_ns["beat_position"][0]) if by_ns.get("beat_position") else []:
+            beats.append(float(o["time"]))
+            if int(o["value"].get("position", 0)) == 1:
+                downbeats.append(float(o["time"]))
+        stem = jams_path.stem
+        suffix = "_mic" if audio == "mic" else "_mix"
+        candidates = list(root.rglob(f"{stem}{suffix}.wav")) or list(root.rglob(f"{stem}.wav"))
+        if not candidates:
+            print(f"skip: no audio for {stem}", file=sys.stderr)
+            continue
+        player = stem[:2]
+        style = stem.split("_", 1)[1][:2] if "_" in stem else "??"
+        tracks.append(
+            Track(
+                dataset="guitarset",
+                split="tune" if player in TUNE_PLAYERS else "report",
+                name=stem,
+                group=style,
+                audio=candidates[0],
+                chord_intervals=intervals,
+                chord_labels=labels,
+                key=key,
+                beats=np.array(beats, dtype=float),
+                downbeats=np.array(downbeats, dtype=float),
+            )
+        )
+    return tracks
+
+
+def read_arff(path: Path) -> tuple[list[str], list[list[str]]]:
+    """Minimal ARFF reader: attribute names and the data rows as strings."""
+    attributes: list[str] = []
+    rows: list[list[str]] = []
+    in_data = False
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("%"):
+            continue
+        if in_data:
+            rows.append([cell.strip().strip("'\"") for cell in _split_csv(line)])
+        elif line.lower().startswith("@attribute"):
+            match = re.match(r"@attribute\s+('([^']*)'|\"([^\"]*)\"|(\S+))", line, re.IGNORECASE)
+            if match:
+                attributes.append(match.group(2) or match.group(3) or match.group(4) or "")
+        elif line.lower().startswith("@data"):
+            in_data = True
+    return attributes, rows
+
+
+def _split_csv(line: str) -> list[str]:
+    out, current, quote = [], "", None
+    for ch in line:
+        if quote:
+            if ch == quote:
+                quote = None
+            else:
+                current += ch
+        elif ch in "'\"":
+            quote = ch
+        elif ch == ",":
+            out.append(current)
+            current = ""
+        else:
+            current += ch
+    out.append(current)
+    return out
+
+
+def _find_column(attributes: Sequence[str], *needles: str) -> int:
+    for i, name in enumerate(attributes):
+        lowered = name.lower()
+        if any(n in lowered for n in needles):
+            return i
+    raise KeyError(f"no column matching {needles} in {list(attributes)}")
+
+
+def aam_tracks(root: Path, count: int) -> list[Track]:
+    """AAM from its Zenodo layout: per-track ARFF annotations + mixed audio.
+
+    Tracks are the first `count` ids in sorted order (deterministic). The
+    annotation files are matched by id and by keyword (chord / key / beat).
+    """
+    arffs = sorted(root.rglob("*.arff"))
+    by_id: dict[str, dict[str, Path]] = {}
+    for path in arffs:
+        match = re.match(r"^(\d{4})", path.name)
+        if not match:
+            continue
+        kind = path.stem.lower()
+        bucket = by_id.setdefault(match.group(1), {})
+        for keyword in ("chord", "key", "beat"):
+            if keyword in kind and keyword not in bucket:
+                bucket[keyword] = path
+    audio_files = {
+        p.name: p
+        for p in root.rglob("*")
+        if p.suffix.lower() in AUDIO_SUFFIXES and "mix" in p.stem.lower()
+    }
+    tracks = []
+    for track_id in sorted(by_id)[:count]:
+        files = by_id[track_id]
+        audio = next(
+            (p for name, p in sorted(audio_files.items()) if name.startswith(track_id)), None
+        )
+        if audio is None or "chord" not in files:
+            print(f"skip: AAM {track_id} missing audio or chords", file=sys.stderr)
+            continue
+        attrs, rows = read_arff(files["chord"])
+        t_col = _find_column(attrs, "onset", "start", "time")
+        label_col = _find_column(attrs, "chord", "label")
+        end_col = None
+        for i, name in enumerate(attrs):
+            if any(n in name.lower() for n in ("offset", "end")):
+                end_col = i
+        starts = [float(r[t_col]) for r in rows]
+        labels = [normalize_aam_label(r[label_col]) for r in rows]
+        if end_col is not None:
+            ends = [float(r[end_col]) for r in rows]
+        else:
+            ends = [*starts[1:], starts[-1] + 1.0 if starts else 0.0]
+        intervals = np.array(list(zip(starts, ends, strict=True)), dtype=float)
+        key = None
+        if "key" in files:
+            kattrs, krows = read_arff(files["key"])
+            if krows:
+                kcol = _find_column(kattrs, "key", "tonic", "label")
+                key = parse_key(krows[0][kcol])
+        beats, downbeats = np.zeros(0), np.zeros(0)
+        if "beat" in files:
+            battrs, brows = read_arff(files["beat"])
+            bcol = _find_column(battrs, "onset", "time", "start")
+            beats = np.array([float(r[bcol]) for r in brows])
+            try:
+                pcol = _find_column(battrs, "position", "beat")
+                downbeats = np.array(
+                    [float(r[bcol]) for r in brows if r[pcol].strip() in ("1", "1.0")]
+                )
+            except KeyError:
+                pass
+        tracks.append(
+            Track(
+                dataset="aam",
+                split="report",
+                name=track_id,
+                group="aam",
+                audio=audio,
+                chord_intervals=intervals,
+                chord_labels=labels,
+                key=key,
+                beats=beats,
+                downbeats=downbeats,
+            )
+        )
+    return tracks
+
+
+PITCH = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+
+
+def parse_key(text: str) -> tuple[int, str] | None:
+    """`A:minor`, `Eb:major`, `F# minor`, `Cm` -> (pitch class, mode)."""
+    t = text.strip()
+    if not t or t.upper() in ("N", "NONE"):
+        return None
+    match = re.match(r"^([A-Ga-g])([#b]*)\s*[:\s]?\s*(major|minor|maj|min|m|M)?$", t)
+    if not match:
+        return None
+    pc = PITCH[match.group(1).upper()]
+    for acc in match.group(2):
+        pc += 1 if acc == "#" else -1
+    mode_text = match.group(3) or "major"
+    mode = "minor" if mode_text in ("minor", "min", "m") else "major"
+    return pc % 12, mode
+
+
+def normalize_aam_label(text: str) -> str:
+    """AAM chord labels to Harte; `N` for none. Unknown spellings pass through."""
+    t = text.strip()
+    if not t or t.upper() in ("N", "NONE", "NO CHORD"):
+        return "N"
+    if ":" in t or t in ("X",):
+        return t
+    match = re.match(r"^([A-G][#b]?)(.*)$", t)
+    if not match:
+        return t
+    root, rest = match.groups()
+    rest = rest.strip()
+    table = {"": "maj", "maj": "maj", "M": "maj", "m": "min", "min": "min", "dim": "dim",
+             "aug": "aug", "7": "7", "maj7": "maj7", "M7": "maj7", "m7": "min7", "min7": "min7",
+             "sus2": "sus2", "sus4": "sus4", "dim7": "dim7", "hdim7": "hdim7", "m7b5": "hdim7",
+             "6": "maj6", "m6": "min6", "5": "5"}  # fmt: skip
+    return f"{root}:{table.get(rest, rest)}"
+
+
+# --- scoring -------------------------------------------------------------------
+
+
+def chord_scores(
+    ref_intervals: np.ndarray,
+    ref_labels: Sequence[str],
+    est_intervals: np.ndarray,
+    est_labels: Sequence[str],
+) -> dict[str, float]:
+    import mir_eval
+
+    if len(ref_intervals) == 0:
+        return {m: float("nan") for m in CHORD_METRICS}
+    est_intervals, est_labels = mir_eval.util.adjust_intervals(
+        est_intervals, list(est_labels), ref_intervals.min(), ref_intervals.max(), "N", "N"
+    )
+    scores = mir_eval.chord.evaluate(
+        ref_intervals, list(ref_labels), est_intervals, list(est_labels)
+    )
+    return {m: float(scores[m]) for m in CHORD_METRICS}
+
+
+def key_scores(
+    reference: tuple[int, str] | None, estimate: tuple[int, str] | None
+) -> dict[str, float]:
+    import mir_eval
+
+    if reference is None:
+        return {"key_exact": float("nan"), "key_weighted": float("nan")}
+    if estimate is None:
+        return {"key_exact": 0.0, "key_weighted": 0.0}
+    names = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
+    ref = f"{names[reference[0]]} {reference[1]}"
+    est = f"{names[estimate[0]]} {estimate[1]}"
+    return {
+        "key_exact": float(reference == estimate),
+        "key_weighted": float(mir_eval.key.weighted_score(ref, est)),
+    }
+
+
+# --- running the experts ----------------------------------------------------------
+
+
+@dataclass
+class TrackOutputs:
+    """Everything the fusion needs for one track, cached so tuning is cheap."""
+
+    beats: list  # opencapo Beat objects
+    duration: float
+    beat_probs: dict[str, np.ndarray]
+    bass: object | None
+    chroma_scores: np.ndarray
+    seconds: dict[str, float] = field(default_factory=dict)
+
+
+def build_experts(names: Sequence[str], device: str) -> list:
+    from opencapo.analysis.chords.chroma import ChromaTemplateExpert
+    from opencapo.analysis.chords.models.btc import BTCExpert
+    from opencapo.analysis.chords.models.lvchordia import LVChordiaExpert
+
+    table: dict[str, Callable[[], object]] = {
+        "btc": lambda: BTCExpert(device=device),
+        "lvchordia": lambda: LVChordiaExpert(device=device),
+        "chroma": lambda: ChromaTemplateExpert(),
+    }
+    return [table[n]() for n in names]
+
+
+def compute_outputs(track: Track, experts: list, separator, device: str) -> TrackOutputs:  # type: ignore[no-untyped-def]
+    from opencapo.analysis.audio import Audio, decode
+    from opencapo.analysis.chords.bassline import BassLineDetector
+    from opencapo.analysis.chords.chroma import ChromaTemplateExpert, chromagram, mean_chroma
+    from opencapo.analysis.chords.fusion import aggregate_to_beats
+    from opencapo.analysis.chords.key import scores_from_chroma
+    from opencapo.analysis.grid import build_grid
+
+    audio = decode(track.audio)
+    grid = build_grid(track.beats.tolist(), track.downbeats.tolist())
+    beats = list(grid.beats)
+    beat_times = [b.time for b in beats]
+    seconds: dict[str, float] = {}
+    stems = None
+    if separator is not None:
+        start = time.perf_counter()
+        stems = separator.separate(audio)
+        seconds["separate"] = time.perf_counter() - start
+    harmonic = stems.mix("bass", "other", "vocals") if stems is not None else audio
+    gram = chromagram(harmonic)
+    beat_probs = {}
+    for expert in experts:
+        start = time.perf_counter()
+        post = (
+            expert.from_chromagram(gram)
+            if isinstance(expert, ChromaTemplateExpert)
+            else expert.estimate(audio, stems)
+        )
+        beat_probs[expert.name] = aggregate_to_beats(post, beat_times, audio.duration)
+        seconds[expert.name] = time.perf_counter() - start
+    bass = None
+    if stems is not None:
+        bass = BassLineDetector().detect(
+            Audio(samples=stems.bass, sample_rate=stems.sample_rate), beat_times, audio.duration
+        )
+    return TrackOutputs(
+        beats=beats,
+        duration=audio.duration,
+        beat_probs=beat_probs,
+        bass=bass,
+        chroma_scores=scores_from_chroma(mean_chroma(gram)),
+        seconds=seconds,
+    )
+
+
+def run_fusion(
+    outputs: TrackOutputs, expert_names: Sequence[str], model_names: Sequence[str], params
+):  # type: ignore[no-untyped-def]
+    """Chords + key for a subset of experts with given FusionParams (mirrors ChordStage)."""
+    from opencapo.analysis.chords.fusion import decode
+    from opencapo.analysis.chords.key import estimate_key, scores_from_chords
+    from opencapo.analysis.chords.vocab import format_label
+
+    probs = {n: outputs.beat_probs[n] for n in expert_names}
+    models = [n for n in model_names if n in probs]
+    preliminary = decode(
+        outputs.beats, probs, models, duration=outputs.duration, bass=outputs.bass, params=params
+    )
+    key = estimate_key(
+        outputs.chroma_scores, scores_from_chords(preliminary.chords), preliminary.chords
+    )
+    final = decode(
+        outputs.beats,
+        probs,
+        models,
+        duration=outputs.duration,
+        key=key,
+        bass=outputs.bass,
+        params=params,
+    )
+    intervals = np.array([[c.start, c.end] for c in final.chords], dtype=float).reshape(-1, 2)
+    labels = [format_label(c.root, c.quality, c.bass) for c in final.chords]
+    key_tuple = None if key is None else (key.tonic, key.mode.value)
+    return intervals, labels, key_tuple
+
+
+# --- aggregation ----------------------------------------------------------------
+
+
+def mean_of(rows: Iterable[dict[str, float]], metric: str) -> float:
+    values = [r[metric] for r in rows if not np.isnan(r[metric])]
+    return float(np.mean(values)) if values else float("nan")
+
+
+def score_system(
+    name: str,
+    tracks: list[Track],
+    outputs: dict[str, TrackOutputs],
+    expert_names,
+    model_names,
+    params,
+) -> dict:  # type: ignore[no-untyped-def]
+    rows = []
+    for track in tracks:
+        out = outputs[track.name]
+        intervals, labels, key = run_fusion(out, expert_names, model_names, params)
+        row = {
+            "track": track.name,
+            "dataset": track.dataset,
+            "split": track.split,
+            "group": track.group,
+        }
+        row.update(chord_scores(track.chord_intervals, track.chord_labels, intervals, labels))
+        row.update(key_scores(track.key, key))
+        row["seconds"] = sum(out.seconds.get(n, 0.0) for n in expert_names)
+        rows.append(row)
+    return {
+        "system": name,
+        "experts": list(expert_names),
+        "params": params.__dict__ | {"weights": dict(params.weights)},
+        "rows": rows,
+    }
+
+
+def summarize(system: dict) -> dict:
+    rows = system["rows"]
+    subsets = {
+        "guitarset_tune": [r for r in rows if r["dataset"] == "guitarset" and r["split"] == "tune"],
+        "guitarset_report": [
+            r for r in rows if r["dataset"] == "guitarset" and r["split"] == "report"
+        ],
+        "aam": [r for r in rows if r["dataset"] == "aam"],
+    }
+    summary = {}
+    for subset, subset_rows in subsets.items():
+        if not subset_rows:
+            continue
+        summary[subset] = {
+            m: mean_of(subset_rows, m)
+            for m in (*CHORD_METRICS, "key_exact", "key_weighted", "seconds")
+        }
+        summary[subset]["tracks"] = len(subset_rows)
+        groups = sorted({r["group"] for r in subset_rows})
+        if len(groups) > 1:
+            summary[subset]["by_group"] = {
+                g: {"majmin": mean_of([r for r in subset_rows if r["group"] == g], "majmin"),
+                    "key_exact": mean_of([r for r in subset_rows if r["group"] == g], "key_exact")}
+                for g in groups
+            }  # fmt: skip
+    return summary
+
+
+def tune(tracks: list[Track], outputs: dict[str, TrackOutputs], expert_names, model_names):  # type: ignore[no-untyped-def]
+    """Grid search FusionParams on the tuning tracks, maximising majmin."""
+    from opencapo.analysis.chords.fusion import FusionParams
+
+    weight_grid = [0.5, 1.0, 2.0]
+    grids = {
+        "key_prior": [0.0, 0.5, 1.0],
+        "change_cost_downbeat": [0.1, 0.3, 1.0],
+        "change_cost_beat": [0.5, 1.5, 3.0],
+    }
+    best, best_score = None, -1.0
+    weight_combos = list(itertools.product(weight_grid, repeat=len(expert_names)))
+    for weights in weight_combos:
+        for key_prior, cost_db, cost_b in itertools.product(*grids.values()):
+            params = FusionParams(
+                weights=dict(zip(expert_names, weights, strict=True)),
+                key_prior=key_prior,
+                change_cost_downbeat=cost_db,
+                change_cost_beat=cost_b,
+            )
+            rows = score_system("tune", tracks, outputs, expert_names, model_names, params)["rows"]
+            score = mean_of(rows, "majmin")
+            if score > best_score:
+                best, best_score = params, score
+    return best, best_score
+
+
+# --- reporting ------------------------------------------------------------------
+
+
+def environment(device: str) -> dict:
+    info = {
+        "date": dt.date.today().isoformat(),
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "device": device,
+        "packages": {},
+    }
+    for name in ("opencapo", "torch", "lv-chordia", "librosa", "mir_eval", "demucs", "numpy"):
+        try:
+            info["packages"][name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            info["packages"][name] = None
+    try:
+        import torch
+
+        if device.startswith("cuda") and torch.cuda.is_available():
+            info["gpu"] = torch.cuda.get_device_name(0)
+    except ImportError:
+        pass
+    return info
+
+
+def fmt(value: float) -> str:
+    return "–" if np.isnan(value) else f"{value:.3f}"
+
+
+def markdown(systems: list[dict], env: dict, notes: list[str]) -> str:
+    lines = [
+        "# 第 2 步：和弦与调性评测（GuitarSet + AAM）",
+        "",
+        f"由 `scripts/eval_chords.py` 生成于 {env['date']}。",
+        f"设备：{env.get('gpu') or env['device']}；Python {env['python']}；"
+        + "、".join(f"{k} {v}" for k, v in env["packages"].items() if v),
+        "",
+        "拍网格来自数据集自带的拍点标注；分轨来自 Demucs（低音线用）。"
+        "指标：mir_eval `chord`（按时长加权）与调性精确匹配。"
+        f"验收门槛：GuitarSet（报数半）与 AAM 上 majmin ≥ {ACCEPTANCE_MAJMIN:.0%}、"
+        f"调性 ≥ {ACCEPTANCE_KEY:.0%}。调参只用 GuitarSet 吉他手 00–02。",
+        "",
+    ]
+    for subset, title in (
+        ("guitarset_report", "GuitarSet 报数半（吉他手 03–05）"),
+        ("aam", "AAM（500 首）"),
+        ("guitarset_tune", "GuitarSet 调参半（吉他手 00–02，仅供对照）"),
+    ):
+        if not any(subset in s["summary"] for s in systems):
+            continue
+        lines += [
+            f"## {title}",
+            "",
+            "| 系统 | majmin | sevenths | majmin_inv | sevenths_inv | root "
+            "| 调性精确 | 调性加权 | 每曲耗时 | 验收 |",
+            "|---|---|---|---|---|---|---|---|---|---|",
+        ]
+        for s in systems:
+            if subset not in s["summary"]:
+                continue
+            m = s["summary"][subset]
+            verdict = (
+                "自检"
+                if s["system"] == "annotations"
+                else (
+                    "通过"
+                    if m["majmin"] >= ACCEPTANCE_MAJMIN and m["key_exact"] >= ACCEPTANCE_KEY
+                    else "未通过"
+                )
+            )
+            if subset == "guitarset_tune":
+                verdict = "对照"
+            cells = [
+                s["system"],
+                *(fmt(m[k]) for k in (*CHORD_METRICS, "key_exact", "key_weighted")),
+                f"{m['seconds']:.2f} s",
+                verdict,
+            ]
+            lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
+    final = next((s for s in systems if s["system"] == "committee (tuned)"), None)
+    if final is not None:
+        lines += ["## 按风格 / 流派（committee (tuned) 的 majmin / 调性精确）", ""]
+        for subset in ("guitarset_report", "aam"):
+            groups = final["summary"].get(subset, {}).get("by_group")
+            if groups:
+                lines.append(f"**{subset}**")
+                lines.append("")
+                lines.append("| 组 | majmin | 调性精确 |")
+                lines.append("|---|---|---|")
+                for g, v in groups.items():
+                    lines.append(f"| {g} | {fmt(v['majmin'])} | {fmt(v['key_exact'])} |")
+                lines.append("")
+        lines += ["## 调参结果", "", "```json", json.dumps(final["params"], indent=2), "```", ""]
+    if notes:
+        lines += ["## 备注", ""] + [f"- {n}" for n in notes]
+    return "\n".join(lines) + "\n"
+
+
+# --- main -------------------------------------------------------------------------
+
+
+def inspect(tracks: list[Track]) -> None:
+    seen = set()
+    for t in tracks:
+        if t.dataset in seen:
+            continue
+        seen.add(t.dataset)
+        first = list(zip(t.chord_intervals[:3].tolist(), t.chord_labels[:3], strict=True))
+        print(f"[{t.dataset}] {t.name}: audio={t.audio}")
+        print(f"  chords: {len(t.chord_labels)} segments, first: {first}")
+        print(f"  key: {t.key}; beats: {len(t.beats)} (downbeats {len(t.downbeats)})")
+        print(f"  first beats: {t.beats[:4].tolist()}")
+        unknown = sorted({label for label in t.chord_labels if not _parses(label)})
+        if unknown:
+            print(f"  WARNING unparsable labels: {unknown[:10]}")
+    counts: dict[tuple[str, str], int] = {}
+    for t in tracks:
+        counts[(t.dataset, t.split)] = counts.get((t.dataset, t.split), 0) + 1
+    print("counts:", counts)
+
+
+def _parses(label: str) -> bool:
+    from opencapo.analysis.chords.vocab import LabelError, parse_label
+
+    try:
+        parse_label(label)
+        return True
+    except LabelError:
+        return False
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--guitarset", type=Path, help="GuitarSet root (annotation/ + audio_mono-*/)"
+    )
+    parser.add_argument("--aam", type=Path, help="AAM root (annotations + mixes)")
+    parser.add_argument("--aam-count", type=int, default=500)
+    parser.add_argument(
+        "--guitarset-chords", choices=("instructed", "performed"), default="instructed"
+    )
+    parser.add_argument("--guitarset-audio", choices=("mic", "mix"), default="mic")
+    parser.add_argument("--experts", default="btc,lvchordia,chroma")
+    parser.add_argument("--device", default="auto")
+    parser.add_argument("--limit", type=int, help="first N tracks of each dataset (dry run)")
+    parser.add_argument("--no-tune", action="store_true")
+    parser.add_argument("--no-stems", action="store_true", help="skip Demucs (no bass line)")
+    parser.add_argument("--cache", type=Path, help="directory to cache expert outputs between runs")
+    parser.add_argument("--inspect", action="store_true", help="print dataset formats and exit")
+    parser.add_argument("--out", default="docs/benchmarks/step-2-chords")
+    args = parser.parse_args(argv)
+
+    tracks: list[Track] = []
+    if args.guitarset:
+        tracks += guitarset_tracks(
+            args.guitarset, chords=args.guitarset_chords, audio=args.guitarset_audio
+        )
+    if args.aam:
+        tracks += aam_tracks(args.aam, args.aam_count)
+    if not tracks:
+        print("no tracks found; check --guitarset / --aam", file=sys.stderr)
+        return 1
+    if args.limit:
+        tracks = [
+            t
+            for d in ("guitarset", "aam")
+            for t in [x for x in tracks if x.dataset == d][: args.limit]
+        ]
+    if args.inspect:
+        inspect(tracks)
+        return 0
+
+    from opencapo.analysis.chords.fusion import FusionParams
+    from opencapo.analysis.device import resolve_device
+
+    device = resolve_device(args.device)
+    expert_names = [n for n in args.experts.split(",") if n]
+    experts = build_experts(expert_names, device)
+    model_names = [e.name for e in experts if e.is_model]
+    separator = None
+    if not args.no_stems:
+        from opencapo.analysis.separate import DemucsSeparator
+
+        separator = DemucsSeparator(device=device)
+
+    from tqdm import tqdm
+
+    outputs: dict[str, TrackOutputs] = {}
+    cache_dir = args.cache
+    if cache_dir:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    for track in tqdm(tracks, desc="experts", unit="track"):
+        cache_file = cache_dir / f"{track.dataset}_{track.name}.pkl" if cache_dir else None
+        if cache_file and cache_file.exists():
+            outputs[track.name] = pickle.loads(cache_file.read_bytes())
+            if set(expert_names) <= set(outputs[track.name].beat_probs):
+                continue
+        outputs[track.name] = compute_outputs(track, experts, separator, device)
+        if cache_file:
+            cache_file.write_bytes(pickle.dumps(outputs[track.name]))
+
+    # Self-check: the annotations against themselves must score 1.0.
+    self_rows = []
+    for t in tracks:
+        row = {
+            "track": t.name,
+            "dataset": t.dataset,
+            "split": t.split,
+            "group": t.group,
+            "seconds": 0.0,
+        }
+        row.update(
+            chord_scores(t.chord_intervals, t.chord_labels, t.chord_intervals, t.chord_labels)
+        )
+        row.update(key_scores(t.key, t.key))
+        self_rows.append(row)
+    self_check = {"system": "annotations", "experts": [], "params": {}, "rows": self_rows}
+    if abs(mean_of(self_rows, "majmin") - 1.0) > 1e-6:
+        print(
+            f"self-check failed: annotations vs themselves scored {mean_of(self_rows, 'majmin')}",
+            file=sys.stderr,
+        )
+        return 1
+
+    systems = [self_check]
+    default = FusionParams()
+    for name in expert_names:
+        systems.append(score_system(name, tracks, outputs, [name], model_names, default))
+    systems.append(
+        score_system("committee (default)", tracks, outputs, expert_names, model_names, default)
+    )
+    notes = []
+    tune_tracks = [t for t in tracks if t.split == "tune"]
+    if not args.no_tune and tune_tracks:
+        tuned, tuned_score = tune(tune_tracks, outputs, expert_names, model_names)
+        systems.append(
+            score_system("committee (tuned)", tracks, outputs, expert_names, model_names, tuned)
+        )
+        notes.append(f"调参集上的最佳 majmin：{tuned_score:.3f}（{len(tune_tracks)} 段）")
+    for s in systems:
+        s["summary"] = summarize(s)
+
+    env = environment(device)
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "environment": env,
+        "acceptance": {"majmin": ACCEPTANCE_MAJMIN, "key_exact": ACCEPTANCE_KEY},
+        "tracks": {
+            "guitarset": sum(t.dataset == "guitarset" for t in tracks),
+            "aam": sum(t.dataset == "aam" for t in tracks),
+        },
+        "systems": [{k: v for k, v in s.items()} for s in systems],
+    }
+    out.with_suffix(".json").write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, default=float) + "\n", encoding="utf-8"
+    )
+    out.with_suffix(".md").write_text(markdown(systems, env, notes), encoding="utf-8")
+    print(out.with_suffix(".md").read_text(encoding="utf-8"))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
