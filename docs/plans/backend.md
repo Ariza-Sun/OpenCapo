@@ -32,7 +32,7 @@ API 层
 | 环节 | 输入 | 输出 | 候选组件（均有权重、许可证明确） |
 |---|---|---|---|
 | 分轨 | 混音 | vocals / drums / bass / other | **已定：Demucs `htdemucs`**（第 1 步）；备选 BS-RoFormer |
-| 节拍 / 强拍 / BPM | 混音（评测时另测 drums + bass） | `Beat`、`Tempo`、`TimeSignature` | **已定：Beat This!**（第 1 步）；备选 madmom、all-in-one |
+| 节拍 / 强拍 / BPM | 混音（实测 drums + bass 重混更差：拍点 F1 0.770 对 0.891） | `Beat`、`Tempo`、`TimeSignature` | **已定：Beat This!**（第 1 步，GTZAN 拍点 F1 0.891）；备选 madmom、all-in-one |
 | 和弦 | 混音去鼓（bass + other）+ 拍网格 | `Chord`（含转位、置信度） | BTC、ChordFormer、autochord |
 | 调性 | `Chord` 序列 + 音频 | `Key` | 和弦统计规则法 + essentia key extractor 互校 |
 | 人声旋律 | vocals | 音高曲线 → 切分 → 量化到拍网格 → `Note` | RMVPE / CREPE 提取音高；音符切分与量化自写 |

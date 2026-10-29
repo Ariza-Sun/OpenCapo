@@ -20,7 +20,14 @@ An open-source Discord bot that turns a song's audio into a guitar play-along sh
 
 ## 状态
 
-阶段 1 第 1 步（分轨 + 节拍 + BPM）实现中，见 [docs/plans/step-1.md](docs/plans/step-1.md)。`opencapo analyze` 已能解码音频（8 分钟上限）、用 Demucs 分轨（只在内部用，结束即删）、用 Beat This! 输出拍点 / 小节 / 全局 BPM / 拍号。验收数字见 [docs/benchmarks/](docs/benchmarks/README.md)（待在 GPU 上生成）。和弦、调性、编配、渲染与 Discord Bot 尚未开始。
+阶段 1 第 1 步（分轨 + 节拍 + BPM）已完成，见 [docs/plans/step-1.md](docs/plans/step-1.md)。`opencapo analyze` 能解码音频（8 分钟上限）、用 Demucs 分轨（只在内部用，结束即删）、用 Beat This! 输出拍点 / 小节 / 全局 BPM / 拍号。验收数字（由 [docs/benchmarks/](docs/benchmarks/README.md) 里的脚本生成，RTX 3090）：
+
+| 指标 | 结果 | 验收门槛 |
+|---|---|---|
+| 节拍 F-measure（GTZAN，998 首） | 拍点 **0.891**，强拍 0.786 | 拍点 ≥ 0.85 |
+| 4 分钟歌曲分轨 + 节拍（单卡，热启动） | **7.1 秒**（冷启动 13.7 秒） | ≤ 90 秒 |
+
+和弦、调性、编配、渲染与 Discord Bot 尚未开始。
 
 ## 开发
 

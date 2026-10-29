@@ -1,7 +1,7 @@
 # 第 1 步实现计划：分轨 + 节拍 + BPM
 
 > 对应：`docs/ROADMAP.md` 第 1 步；需求 `docs/REQUIREMENTS.md` 5.1（输入与时长上限）、5.2（`Beat`、`Tempo`、`Stem`）、7（处理时间、可观测性、可测试性、许可证）。
-> 状态：第 8 节决定已全部确认，实施中。
+> 状态：已完成。验收数字见第 11 节与 `docs/benchmarks/`。
 
 ## 1. 目标与范围
 
@@ -205,6 +205,7 @@ git add docs/benchmarks && git commit -m "Add step-1 beat evaluation and timing 
 - 权重公开、首次运行自动下载，可用；但作者未为权重单独声明许可证，训练数据含仅限研究用途的 MUSDB 曲目与 Meta 内部数据，作者表示无权澄清。**按非商业（CC-BY-NC 同级）对待**，在 `backend.md` 与自部署文档中显式标出。
 - 4 分钟歌曲在 3090 上预计 10–20 秒，给后续环节留足 90 秒预算；分轨在本步没有消费者，质量差异要到第 5 / 7 步在人声轨上才看得出，届时只换 `Separator` 适配器。
 - 计时脚本顺带记录 `htdemucs_ft` 的耗时作参考，不接入。
+- **实测**（RTX 3090，4:00 歌曲，`docs/benchmarks/step-1-timing.md`）：`htdemucs` 分轨 6.1 秒、整条流水线热启动 7.1 秒（冷启动 13.7 秒）；`htdemucs_ft` 分轨 20.3 秒。
 - 未采用：`htdemucs_ft`（约 4 倍耗时，SDR 只高约 0.5 dB，许可证状况相同）；BS-RoFormer 社区权重（人声质量最高，但 4 轨权重稀少、许可证各异且不少为 CC-BY-NC-SA，要自己拼多个模型，依赖与显存更重）；自己在 MUSDB18-HQ 上训练（远超本步范围）。
 
 ### 3. 已定：节拍模型只实测 Beat This!，过门槛即用；不过再测备选
@@ -215,6 +216,7 @@ git add docs/benchmarks && git commit -m "Add step-1 beat evaluation and timing 
 - 没有第二个模型交叉验证评测代码，用两项自检代替：（1）把标注当预测算一遍，F1 必须为 1.0；（2）结果与论文报告的 GTZAN 拍点 F1 ≈ 0.89 对照，偏差超过 2 个百分点先查代码。
 - 评测口径：mir_eval `beat.f_measure`（70 ms 容差），拍点与强拍分别算、按曲目平均、按流派分组；验收门槛只对拍点 F1，强拍 F1 报数字不设门槛。保留"drums + bass 重混后跟踪"对照组。
 - 未采用：三个候选全跑（madmom 需从 git 编译安装、all-in-one 的 NATTEN 常装不上，而按选定规则 Beat This! 几乎是预定答案，不值得花服务器时间）。
+- **实测结果（选定）**：GTZAN 998 首（jazz.00054 损坏跳过），标注自检 1.000；Beat This! 在混音上拍点 F1 **0.891**、强拍 F1 0.786，与论文报告的 ≈ 0.89 / 0.78 吻合，过门槛，不再测备选。"drums + bass 重混"对照组为 0.770 / 0.684，明显更差，节拍输入保持混音。按流派：古典最弱（0.660），布鲁斯 0.831，其余 0.87–0.98；弹唱场景常见的 pop / country / rock 都在 0.93 以上。详见 `docs/benchmarks/step-1-beats.md`。
 
 ### 4. 已定：评测集用 GTZAN（GTZAN-Rhythm 标注）
 
@@ -262,8 +264,8 @@ git add docs/benchmarks && git commit -m "Add step-1 beat evaluation and timing 
 
 | 验收项（ROADMAP 第 1 步） | 如何证明 | 状态 |
 |---|---|---|
-| 节拍 F-measure ≥ 85%（评测脚本输出，数字进 README 或 docs） | `scripts/eval_beats.py` → `docs/benchmarks/step-1-beats.md`；README 引用 | 待负责人在 GPU 上生成 |
-| 4 分钟歌曲在一张 GPU 上：分轨 + 节拍 ≤ 90 秒 | `scripts/time_pipeline.py` → `docs/benchmarks/step-1-timing.md`（RTX 3090） | 待负责人在 GPU 上生成 |
+| 节拍 F-measure ≥ 85%（评测脚本输出，数字进 README 或 docs） | `scripts/eval_beats.py` → `docs/benchmarks/step-1-beats.md`；README 引用 | **通过**：拍点 F1 0.891（GTZAN 998 首，RTX 3090） |
+| 4 分钟歌曲在一张 GPU 上：分轨 + 节拍 ≤ 90 秒 | `scripts/time_pipeline.py` → `docs/benchmarks/step-1-timing.md`（RTX 3090） | **通过**：热启动 7.1 秒，冷启动 13.7 秒 |
 | `opencapo analyze` 输出含 `Beat`、`Tempo` | `tests/test_pipeline.py`、`tests/test_cli.py`（假模型）；`tests/test_models.py` 与 CI `analysis-smoke` 任务（真模型，节拍器音频 BPM ≈ 120） | 已实现 |
 | 分轨文件在流程结束后不残留 | `tests/test_separate.py`（临时目录）、`tests/test_pipeline.py`（流水线正常与异常路径）、`tests/test_models.py`（真模型） | 已实现 |
 | 模型权重许可证逐个列在 `docs/plans/backend.md` | backend.md 第 2.1 节 | 已写 |
